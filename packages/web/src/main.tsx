@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App.js";
 
-const theme = createTheme({ palette: { mode: "light" } });
+const theme = createTheme({ palette: { mode: "dark" } });
 
 const container = document.getElementById("root");
 if (!container) throw new Error("missing #root element");

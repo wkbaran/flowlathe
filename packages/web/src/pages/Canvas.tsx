@@ -15,6 +15,7 @@ import {
   TextField,
   Toolbar,
   Typography,
+  useTheme,
 } from "@mui/material";
 import {
   addEdge,
@@ -50,6 +51,7 @@ interface LogLine {
 }
 
 export function Canvas() {
+  const theme = useTheme();
   const { flowId } = useParams<{ flowId: string }>();
   const [name, setName] = useState<string>("");
   const [version, setVersion] = useState<number>(0);
@@ -189,6 +191,18 @@ export function Canvas() {
           </Button>
         </Toolbar>
       </AppBar>
+      {theme.palette.mode === "dark" && (
+        <style>{`
+          .react-flow__controls-button {
+            background: ${theme.palette.background.paper};
+            border-bottom-color: ${theme.palette.divider};
+            fill: ${theme.palette.text.primary};
+          }
+          .react-flow__controls-button:hover { background: ${theme.palette.action.hover}; }
+          .react-flow__controls-button svg { fill: ${theme.palette.text.primary}; }
+          .react-flow__attribution { background: transparent; color: ${theme.palette.text.secondary}; }
+        `}</style>
+      )}
       <div style={{ flexGrow: 1, display: "flex", minHeight: 0 }}>
         <div style={{ flexGrow: 1 }}>
           <ReactFlow
@@ -201,11 +215,11 @@ export function Canvas() {
             onSelectionChange={({ nodes: selected }) => setSelectedNodeId(selected[0]?.id ?? null)}
             fitView
           >
-            <Background />
+            <Background bgColor={theme.palette.background.default} color={theme.palette.divider} />
             <Controls />
           </ReactFlow>
         </div>
-        <Box sx={{ width: 320, borderLeft: "1px solid #ddd", display: "flex", flexDirection: "column" }}>
+        <Box sx={{ width: 320, borderLeft: 1, borderColor: "divider", display: "flex", flexDirection: "column" }}>
           <Box sx={{ p: 2 }}>
             <Typography variant="subtitle2">Node properties</Typography>
             {selectedNode ? (
