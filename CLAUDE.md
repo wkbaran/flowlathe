@@ -47,3 +47,21 @@ rediscover them the hard way.
 - **Playwright is pinned to `1.54.1`** (not registry `latest`) to match the browsers already
   cached at `~/.cache/ms-playwright` on this machine — bumping the version would trigger a browser
   download.
+- **A controlled MUI field bound to "whichever node is selected" needs a `key` on the currently-
+  selected node's id**, not just a `value` prop. `packages/web/src/pages/Canvas.tsx`'s node
+  properties panel re-renders the same `Template`/`Provider`/`Model` `TextField`s across node
+  selections; without `key={selectedNode.id}` on their wrapping element, React reuses the same
+  underlying `<input>` DOM node across a selection change, and a fast automated `.fill()` right
+  after clicking a different node could land while the field still reflected the *previous* node's
+  identity — the edit silently applied in the wrong place. Reproduced only under Playwright's fast,
+  no-delay interaction, not under a human (or MCP-driven) session with natural pauses between
+  actions — that gap is exactly why it went undetected in manual smoke testing.
+- **An execution that throws before any node starts leaves the SSE stream (and the UI log) totally
+  silent unless you explicitly emit a failure event.** The interpreter/runtime pipeline only had
+  per-node events (`node_started`/`node_finished`/`node_failed`); if `runGraph` itself rejects
+  before dispatching anything (e.g. a schema/template error on the very first node), nothing was
+  ever emitted and the SSE connection just hung with an empty backlog forever. Fixed by adding a
+  `run_failed` `RunEvent` kind that `packages/server/src/executor.ts`'s top-level `.catch()` emits
+  (through the same persisted+broadcast `emit` path as node events) before marking the execution
+  failed — this is also what made the property-panel bug above diagnosable at all, since the UI log
+  went from silently empty to showing the actual missing-template-variable error.
