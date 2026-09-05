@@ -11,7 +11,7 @@ describe("compileGraph", () => {
       ],
       edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
     };
-    const script = compileGraph(graph, { providerKinds: { mock: "mock" } });
+    const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
     expect(script).toContain("MockProviderAdapter");
     expect(script).toContain('const n_a = await rt.prompt(N.n_a, {  });');
     expect(script).toContain('const n_b = await rt.prompt(N.n_b, { input: n_a.output });');
@@ -26,7 +26,7 @@ describe("compileGraph", () => {
       ],
       edges: [],
     };
-    const script = compileGraph(graph, { providerKinds: { mock: "mock" } });
+    const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
     expect(script).toContain("await Promise.all([");
   });
 });

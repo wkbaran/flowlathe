@@ -1,12 +1,12 @@
+import type { ProviderConfig } from "@flowlathe/compiler";
 import { compileGraph } from "@flowlathe/compiler";
 import { parseFlowGraph, type Scheduler } from "@flowlathe/core";
-import { createFlow, getFlow, listFlows, saveFlowVersion } from "@flowlathe/persistence";
+import { createFlow, getFlow, listFlows, listProviders, saveFlowVersion } from "@flowlathe/persistence";
 import type { Db } from "@flowlathe/persistence";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ExecutionHub } from "../execution-hub.js";
 import { runFlow } from "../executor.js";
-import { PROVIDER_KINDS } from "../provider-kinds.js";
 
 const CreateFlowBody = z.object({ name: z.string().min(1) });
 const SaveFlowBody = z.object({ graph: z.unknown() });
@@ -65,7 +65,10 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
     const flow = getFlow(db, request.params.id);
     if (!flow) return reply.code(404).send({ error: "flow not found" });
     try {
-      const script = compileGraph(flow.graph, { providerKinds: PROVIDER_KINDS });
+      const providers: Record<string, ProviderConfig> = Object.fromEntries(
+        listProviders(db).map((p) => [p.id, { kind: p.kind, baseUrl: p.baseUrl ?? undefined }]),
+      );
+      const script = compileGraph(flow.graph, { providers });
       return { script };
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });

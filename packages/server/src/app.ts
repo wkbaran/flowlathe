@@ -1,14 +1,16 @@
 import fastifyStatic from "@fastify/static";
-import type { Scheduler } from "@flowlathe/core";
 import type { Db } from "@flowlathe/persistence";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ExecutionHub } from "./execution-hub.js";
 import { registerExecutionRoutes } from "./routes/executions.js";
 import { registerFlowRoutes } from "./routes/flows.js";
+import { registerProviderRoutes } from "./routes/providers.js";
+import type { SchedulerRegistry } from "./scheduler-registry.js";
 
 export interface BuildAppOptions {
   db: Db;
-  scheduler: Scheduler;
+  credentialKey: Buffer;
+  schedulerRegistry: SchedulerRegistry;
   staticRoot?: string;
 }
 
@@ -16,8 +18,13 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const hub = new ExecutionHub();
 
-  registerFlowRoutes(app, { db: opts.db, hub, scheduler: opts.scheduler });
+  registerFlowRoutes(app, { db: opts.db, hub, scheduler: opts.schedulerRegistry });
   registerExecutionRoutes(app, opts.db, hub);
+  registerProviderRoutes(app, {
+    db: opts.db,
+    credentialKey: opts.credentialKey,
+    schedulerRegistry: opts.schedulerRegistry,
+  });
 
   if (opts.staticRoot) {
     const staticRoot = opts.staticRoot;

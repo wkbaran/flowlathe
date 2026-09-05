@@ -1,7 +1,8 @@
-import { type OpenedDb, openDb, runMigrations } from "@flowlathe/persistence";
-import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
+import { randomBytes } from "node:crypto";
+import { type OpenedDb, ensureDefaultMockProvider, openDb, runMigrations } from "@flowlathe/persistence";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
+import { SchedulerRegistry } from "./scheduler-registry.js";
 
 let opened: OpenedDb;
 let app: ReturnType<typeof buildApp>;
@@ -9,8 +10,10 @@ let app: ReturnType<typeof buildApp>;
 beforeEach(() => {
   opened = openDb(":memory:");
   runMigrations(opened);
-  const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 4 } });
-  app = buildApp({ db: opened.db, scheduler });
+  ensureDefaultMockProvider(opened.db);
+  const credentialKey = randomBytes(32);
+  const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
+  app = buildApp({ db: opened.db, credentialKey, schedulerRegistry });
 });
 
 afterEach(async () => {

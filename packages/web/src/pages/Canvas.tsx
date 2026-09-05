@@ -10,6 +10,8 @@ import {
   List,
   ListItem,
   ListItemText,
+  MenuItem,
+  Select,
   TextField,
   Toolbar,
   Typography,
@@ -28,7 +30,16 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { exportFlow, getFlow, runFlow, saveFlowGraph } from "../api.js";
+import {
+  exportFlow,
+  getFlow,
+  listModels,
+  listProviders,
+  runFlow,
+  saveFlowGraph,
+  type ModelRecord,
+  type ProviderRecord,
+} from "../api.js";
 import { nodeTypes, type NodeStatus } from "../nodes/PromptNodeView.js";
 
 let nextNodeSeq = 1;
@@ -49,6 +60,8 @@ export function Canvas() {
   const [nodeStatus, setNodeStatus] = useState<Record<string, NodeStatus>>({});
   const [log, setLog] = useState<LogLine[]>([]);
   const [exportedScript, setExportedScript] = useState<string | null>(null);
+  const [providers, setProviders] = useState<ProviderRecord[]>([]);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelRecord[]>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -60,6 +73,14 @@ export function Canvas() {
       setEdges(flow.graph.edges as Edge[]);
     });
   }, [flowId, setNodes, setEdges]);
+
+  useEffect(() => {
+    listProviders().then(async (list) => {
+      setProviders(list);
+      const entries = await Promise.all(list.map(async (p) => [p.id, await listModels(p.id)] as const));
+      setModelsByProvider(Object.fromEntries(entries));
+    });
+  }, []);
 
   useEffect(() => () => eventSourceRef.current?.close(), []);
 
@@ -198,20 +219,32 @@ export function Canvas() {
                   onChange={(e) => updateSelectedNodeData({ template: e.target.value })}
                   slotProps={{ htmlInput: { "aria-label": "Template" } }}
                 />
-                <TextField
+                <Select
                   size="small"
-                  label="Provider"
+                  displayEmpty
                   value={(selectedNode.data["providerId"] as string) ?? ""}
-                  onChange={(e) => updateSelectedNodeData({ providerId: e.target.value })}
-                  slotProps={{ htmlInput: { "aria-label": "Provider" } }}
-                />
-                <TextField
+                  onChange={(e) => updateSelectedNodeData({ providerId: e.target.value, modelId: "" })}
+                  inputProps={{ "aria-label": "Provider" }}
+                >
+                  {providers.map((p) => (
+                    <MenuItem key={p.id} value={p.id}>
+                      {p.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+                <Select
                   size="small"
-                  label="Model"
+                  displayEmpty
                   value={(selectedNode.data["modelId"] as string) ?? ""}
                   onChange={(e) => updateSelectedNodeData({ modelId: e.target.value })}
-                  slotProps={{ htmlInput: { "aria-label": "Model" } }}
-                />
+                  inputProps={{ "aria-label": "Model" }}
+                >
+                  {(modelsByProvider[selectedNode.data["providerId"] as string] ?? []).map((m) => (
+                    <MenuItem key={m.id} value={m.modelName}>
+                      {m.modelName}
+                    </MenuItem>
+                  ))}
+                </Select>
               </Box>
             ) : (
               <Typography variant="body2" color="text.secondary">

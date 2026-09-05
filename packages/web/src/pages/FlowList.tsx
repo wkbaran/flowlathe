@@ -9,7 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { createFlow, listFlows, type FlowSummary } from "../api.js";
 
 export function FlowList() {
@@ -32,7 +32,12 @@ export function FlowList() {
     <div>
       <AppBar position="static">
         <Toolbar>
-          <Typography variant="h6">flowlathe</Typography>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+            flowlathe
+          </Typography>
+          <Button color="inherit" component={RouterLink} to="/providers">
+            Providers
+          </Button>
         </Toolbar>
       </AppBar>
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16, maxWidth: 480 }}>

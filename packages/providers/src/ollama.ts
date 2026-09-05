@@ -1,4 +1,6 @@
 import type { ProviderAdapter, ProviderCallRequest, ProviderCallResult } from "@flowlathe/core";
+import { ProviderCallError } from "./errors.js";
+import { retryAfterMsFromHeader } from "./retry-after.js";
 
 interface OllamaGenerateChunk {
   response?: string;
@@ -28,7 +30,11 @@ export class OllamaProviderAdapter implements ProviderAdapter {
       signal: req.signal ?? null,
     });
     if (!res.ok || !res.body) {
-      throw new Error(`ollama request failed: ${res.status} ${await res.text().catch(() => "")}`);
+      const body = await res.text().catch(() => "");
+      throw new ProviderCallError(`ollama request failed: ${res.status} ${body}`, {
+        status: res.status,
+        retryAfterMs: retryAfterMsFromHeader(res.headers.get("retry-after")),
+      });
     }
 
     let content = "";

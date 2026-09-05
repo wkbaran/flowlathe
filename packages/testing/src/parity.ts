@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ProviderKind, compileGraph } from "@flowlathe/compiler";
+import { compileGraph } from "@flowlathe/compiler";
 import type { FlowGraph, RunEvent } from "@flowlathe/core";
 import { runGraph } from "@flowlathe/interpreter";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
@@ -52,8 +52,7 @@ const tsxBin = join(packageDir, "node_modules", ".bin", "tsx");
 const scratchRoot = join(packageDir, ".parity-tmp");
 
 export function traceViaCompiledScript(graph: FlowGraph, responses: Map<string, string>): TraceEntry[] {
-  const providerKinds: Record<string, ProviderKind> = { mock: "mock" };
-  const script = compileGraph(graph, { providerKinds });
+  const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
   mkdirSync(scratchRoot, { recursive: true });
   const dir = mkdtempSync(join(scratchRoot, "run-"));
   const file = join(dir, "flow.ts");

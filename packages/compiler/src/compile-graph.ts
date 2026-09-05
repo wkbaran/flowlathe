@@ -2,11 +2,17 @@ import type { FlowGraph, FlowNode } from "@flowlathe/core";
 import { emitTable } from "./emit-table.js";
 import { topoLevels } from "./topo-levels.js";
 
-export type ProviderKind = "mock" | "ollama";
+export type ProviderKind = "mock" | "ollama" | "openai-compat";
+
+export interface ProviderConfig {
+  kind: ProviderKind;
+  /** Not secret — safe to embed literally. Ignored for "mock". */
+  baseUrl?: string | undefined;
+}
 
 export interface CompileOptions {
-  /** providerId -> which adapter kind the generated script should construct for it. */
-  providerKinds: Record<string, ProviderKind>;
+  /** providerId -> how the generated script should construct that provider's adapter. */
+  providers: Record<string, ProviderConfig>;
 }
 
 export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
@@ -20,22 +26,26 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
     .map((node) => `  ${varName(node.id)}: ${JSON.stringify({ id: node.id, ...node.data })} as const,`)
     .join("\n");
 
-  const statements = levels
-    .map((level) => emitLevel(level, nodesById, incoming))
-    .join("\n");
+  const statements = levels.map((level) => emitLevel(level, nodesById, incoming)).join("\n");
 
   const finishBindings = terminalNodeIds.map((id) => `${varName(id)}: ${varName(id)}.output`).join(", ");
 
-  const usedProviderIds = new Set(graph.nodes.map((n) => (n.data["providerId"] as string) ?? ""));
-  const providerEntries = [...usedProviderIds]
-    .filter((id) => id in opts.providerKinds)
-    .map((id) => `  ${JSON.stringify(id)}: { adapter: ${adapterCtor(opts.providerKinds[id]!)}, maxParallel: 4 },`)
+  const usedProviderIds = [...new Set(graph.nodes.map((n) => n.data["providerId"] as string))].filter(
+    (id) => id in opts.providers,
+  );
+  const providerEntries = usedProviderIds
+    .map((id) => `  ${JSON.stringify(id)}: { adapter: ${adapterCtor(id, opts.providers[id]!)}, maxParallel: 4 },`)
     .join("\n");
 
-  const importedAdapters = new Set([...usedProviderIds].map((id) => opts.providerKinds[id]).filter(Boolean));
+  const usedKinds = new Set(usedProviderIds.map((id) => opts.providers[id]!.kind));
+  const adapterImports = [
+    usedKinds.has("mock") && "MockProviderAdapter",
+    usedKinds.has("ollama") && "OllamaProviderAdapter",
+    usedKinds.has("openai-compat") && "OpenAiCompatAdapter",
+  ].filter(Boolean);
 
   return `import { createRun, InMemoryBlobStore } from "@flowlathe/runtime";
-import { SimpleScheduler${importedAdapters.has("mock") ? ", MockProviderAdapter" : ""}${importedAdapters.has("ollama") ? ", OllamaProviderAdapter" : ""} } from "@flowlathe/providers";
+import { SimpleScheduler${adapterImports.length ? `, ${adapterImports.join(", ")}` : ""} } from "@flowlathe/providers";
 
 const N = {
 ${specEntries}
@@ -104,9 +114,14 @@ function buildIncoming(graph: FlowGraph): Map<string, Map<string, string>> {
   return incoming;
 }
 
-function adapterCtor(kind: ProviderKind): string {
-  if (kind === "mock") return "new MockProviderAdapter()";
-  return 'new OllamaProviderAdapter({ baseUrl: process.env["OLLAMA_BASE_URL"] ?? "http://127.0.0.1:11434" })';
+function adapterCtor(providerId: string, config: ProviderConfig): string {
+  if (config.kind === "mock") return "new MockProviderAdapter()";
+  if (config.kind === "ollama") {
+    const fallback = config.baseUrl ?? "http://127.0.0.1:11434";
+    return `new OllamaProviderAdapter({ baseUrl: process.env["OLLAMA_BASE_URL"] ?? ${JSON.stringify(fallback)} })`;
+  }
+  const envVar = `FLOWLATHE_APIKEY_${providerId.replace(/[^a-zA-Z0-9_]/g, "_").toUpperCase()}`;
+  return `new OpenAiCompatAdapter({ baseUrl: ${JSON.stringify(config.baseUrl ?? "")}, apiKey: process.env[${JSON.stringify(envVar)}] })`;
 }
 
 function varName(nodeId: string): string {
