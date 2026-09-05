@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NODE_KINDS } from "./node-kind.js";
 
 export const PositionSchema = z.object({
   x: z.number(),
@@ -7,7 +8,7 @@ export const PositionSchema = z.object({
 
 export const FlowNodeSchema = z.object({
   id: z.string().min(1),
-  type: z.string().min(1),
+  type: z.enum(NODE_KINDS),
   position: PositionSchema,
   data: z.record(z.string(), z.unknown()),
 });

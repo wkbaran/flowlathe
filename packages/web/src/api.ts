@@ -43,3 +43,29 @@ export function saveFlowGraph(id: string, graph: FlowGraph): Promise<FlowWithGra
     body: JSON.stringify({ graph }),
   }).then((res) => json(res));
 }
+
+export function runFlow(id: string): Promise<{ executionId: string }> {
+  return fetch(`/api/flows/${id}/run`, { method: "POST" }).then((res) => json(res));
+}
+
+export function exportFlow(id: string): Promise<{ script: string }> {
+  return fetch(`/api/flows/${id}/export`).then((res) => json(res));
+}
+
+export interface ResponseLogEntry {
+  id: string;
+  nodeId: string;
+  finishReason: string | null;
+  latencyMs: number | null;
+  createdAt: string;
+  errorJson: unknown;
+}
+
+export interface ExecutionStatus {
+  execution: { id: string; status: string; startedAt: string; endedAt: string | null };
+  responses: ResponseLogEntry[];
+}
+
+export function getExecution(executionId: string): Promise<ExecutionStatus> {
+  return fetch(`/api/executions/${executionId}`).then((res) => json(res));
+}

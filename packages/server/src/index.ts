@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { openDb, runMigrations } from "@flowlathe/persistence";
 import { buildApp } from "./app.js";
+import { createDefaultScheduler } from "./providers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -15,7 +16,7 @@ mkdirSync(dirname(dbPath), { recursive: true });
 const opened = openDb(dbPath);
 runMigrations(opened);
 
-const app = buildApp({ db: opened.db, staticRoot });
+const app = buildApp({ db: opened.db, scheduler: createDefaultScheduler(), staticRoot });
 
 app.listen({ port, host: "127.0.0.1" }, (err, address) => {
   if (err) {

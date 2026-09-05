@@ -12,3 +12,5 @@ dist/
 /playwright/test-results/
 /playwright/playwright-report/
 /packages/server/data/
+/packages/testing/.parity-tmp/
+/.playwright-mcp/

@@ -12,6 +12,7 @@ export interface FlowSummary {
 }
 
 export interface FlowWithGraph extends FlowSummary {
+  flowVersionId: string;
   version: number;
   graph: FlowGraph;
 }
@@ -20,11 +21,12 @@ export function createFlow(db: Db, name: string, graph: FlowGraph): FlowWithGrap
   const id = randomUUID();
   db.insert(flows).values({ id, name }).run();
   const version = 1;
+  const flowVersionId = randomUUID();
   db.insert(flowVersions)
-    .values({ id: randomUUID(), flowId: id, version, graphJson: graph })
+    .values({ id: flowVersionId, flowId: id, version, graphJson: graph })
     .run();
   const row = mustGetFlowRow(db, id);
-  return { ...row, version, graph };
+  return { ...row, flowVersionId, version, graph };
 }
 
 export function listFlows(db: Db): FlowSummary[] {
@@ -45,7 +47,7 @@ export function getFlow(db: Db, id: string): FlowWithGraph | undefined {
     .orderBy(desc(flowVersions.version))
     .get();
   if (!latest) return undefined;
-  return { ...flow, version: latest.version, graph: latest.graphJson };
+  return { ...flow, flowVersionId: latest.id, version: latest.version, graph: latest.graphJson };
 }
 
 export function saveFlowVersion(db: Db, flowId: string, graph: FlowGraph): FlowWithGraph {
@@ -58,15 +60,16 @@ export function saveFlowVersion(db: Db, flowId: string, graph: FlowGraph): FlowW
     .orderBy(desc(flowVersions.version))
     .get();
   const version = (latest?.version ?? 0) + 1;
+  const flowVersionId = randomUUID();
   db.insert(flowVersions)
-    .values({ id: randomUUID(), flowId, version, graphJson: graph })
+    .values({ id: flowVersionId, flowId, version, graphJson: graph })
     .run();
   db.update(flows)
     .set({ updatedAt: sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))` })
     .where(eq(flows.id, flowId))
     .run();
   const row = mustGetFlowRow(db, flowId);
-  return { ...row, version, graph };
+  return { ...row, flowVersionId, version, graph };
 }
 
 function mustGetFlowRow(db: Db, id: string): FlowSummary {

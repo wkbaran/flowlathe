@@ -37,6 +37,13 @@ rediscover them the hard way.
   `drizzle-kit generate`. Tables like `branches`/`snapshots` have a circular FK relationship
   (`branches.forked_from_snapshot_id → snapshots.id`, `snapshots.branch_id → branches.id`); SQLite
   is fine with this since it doesn't validate FK targets at `CREATE TABLE` time.
+- **`@flowlathe/core` must stay genuinely isomorphic — no `Buffer`, no `node:*` imports,
+  anywhere in it.** Workspace packages resolve to raw `.ts` source (not built `.d.ts`), so
+  `tsc --noEmit` in `packages/web` pulls in *all* of core's source transitively through
+  `export *`, even parts web never imports — `skipLibCheck` doesn't shield source files, only
+  `.d.ts`. A `BlobStore` interface typed with `Buffer` broke `web`'s typecheck even though web
+  never touches blobs. Fix: use `Uint8Array` in shared contracts (works in both environments);
+  concrete Node-side implementations (`Buffer` extends `Uint8Array`) satisfy it for free.
 - **Playwright is pinned to `1.54.1`** (not registry `latest`) to match the browsers already
   cached at `~/.cache/ms-playwright` on this machine — bumping the version would trigger a browser
   download.

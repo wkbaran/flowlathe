@@ -1,0 +1,25 @@
+{
+  "name": "@flowlathe/interpreter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@flowlathe/core": "workspace:*",
+    "@flowlathe/node-prompt": "workspace:*",
+    "@flowlathe/runtime": "workspace:*",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@flowlathe/providers": "workspace:*",
+    "typescript": "5.9.3",
+    "vitest": "5.0.0"
+  }
+}

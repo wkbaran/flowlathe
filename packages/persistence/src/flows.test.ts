@@ -1,4 +1,4 @@
-import { emptyFlowGraph } from "@flowlathe/core";
+import { emptyFlowGraph, type FlowGraph } from "@flowlathe/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import { type OpenedDb, openDb } from "./db.js";
 import { createFlow, getFlow, listFlows, saveFlowVersion } from "./flows.js";
@@ -27,7 +27,10 @@ describe("flow repository", () => {
 
   it("bumps the version and persists a new graph on save", () => {
     const created = createFlow(opened.db, "My Flow", emptyFlowGraph());
-    const graph = { nodes: [{ id: "a", type: "prompt", position: { x: 1, y: 2 }, data: {} }], edges: [] };
+    const graph: FlowGraph = {
+      nodes: [{ id: "a", type: "prompt", position: { x: 1, y: 2 }, data: {} }],
+      edges: [],
+    };
     const saved = saveFlowVersion(opened.db, created.id, graph);
     expect(saved.version).toBe(2);
     expect(getFlow(opened.db, created.id)?.graph).toEqual(graph);
