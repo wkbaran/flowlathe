@@ -1,0 +1,29 @@
+{
+  "name": "flowlathe",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "e2e": "playwright test --config=playwright/playwright.config.ts"
+  },
+  "devDependencies": {
+    "turbo": "2.10.12",
+    "typescript": "5.9.3",
+    "@types/node": "22.20.1",
+    "vitest": "5.0.0",
+    "@playwright/test": "1.54.1"
+  },
+  "packageManager": "pnpm@10.6.5",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"],
+    "ignoredBuiltDependencies": ["better-sqlite3"]
+  }
+}
