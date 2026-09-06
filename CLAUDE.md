@@ -85,3 +85,20 @@ rediscover them the hard way.
   golden parity fixture with a multi-node-deep branch without extending the compiler's guard
   propagation first (a general dominator-frontier walk), or the compiled path will crash where the
   interpreter succeeds.
+- **A step-mode execution must resolve the graph it steps against by the flow's CURRENT (latest-
+  saved) version, not the version pinned at `step-start`.** Editing a node's template mid-debug-
+  session and clicking Save creates a new `flow_versions` row; the running execution's own
+  `flow_version_id` FK still points at the version active when stepping began. `GET/POST
+  /api/executions/:id/step` resolves the graph via `getLatestGraphForFlowVersion` (walks
+  version → flow_id → latest version), specifically so "step back, edit a prompt, step forward"
+  actually picks up the edit. Node identity (ids) has to stay stable across such edits for restored
+  snapshots to still line up — this only works because editing a template doesn't change node ids.
+- **`pnpm exec playwright test` run from inside `playwright/` (which has no `package.json` — it's
+  not a workspace package) intermittently crashes every worker with `TypeError: Cannot redefine
+  property: Symbol($$jest-matchers-object)`, even at `--list`, before any test file loads.** Root
+  cause not fully isolated (this machine also has a stray global `@playwright/test@1.54.2` install
+  under `~/.local/share/fnm/.../lib/node_modules` that could be shadowing something via a `pnpm
+  exec` resolution quirk from a non-package cwd), but the fix that reliably works is: run it from
+  the repo root against the explicit config, via the locally pinned binary —
+  `node_modules/.bin/playwright test --config=playwright/playwright.config.ts` — which is also
+  exactly what the root `e2e` npm script does. Don't `cd playwright && pnpm exec playwright test`.
