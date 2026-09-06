@@ -278,6 +278,18 @@ function spotifyLibraryTool(client: SpotifyClient): ToolRegistration {
   };
 }
 
+/** Shared by all three tools: none of them can do anything useful without a connected account,
+ *  so a single reason-check applied uniformly here (rather than repeated in each tool factory)
+ *  is what a workflow-level dependency check (see @flowlathe/core's findMissingToolsets) reports
+ *  back to a flow author as "why is Spotify missing." */
+function unavailableReason(client: SpotifyClient): () => string | undefined {
+  return () => (client.isConnected() ? undefined : "Spotify is not connected — connect it from Providers");
+}
+
 export function createSpotifyToolset(client: SpotifyClient): ToolRegistration[] {
-  return [spotifySearchTool(client), spotifyPlaylistsTool(client), spotifyLibraryTool(client)];
+  const reason = unavailableReason(client);
+  return [spotifySearchTool(client), spotifyPlaylistsTool(client), spotifyLibraryTool(client)].map((reg) => ({
+    ...reg,
+    unavailableReason: reason,
+  }));
 }

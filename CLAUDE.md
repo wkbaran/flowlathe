@@ -239,18 +239,60 @@ rediscover them the hard way.
     at the cost of a model never being told the tool exists at all until an operator sets the env
     var — a deliberate v1 tradeoff, revisit if a flow author needs to *discover* a tool before an
     operator configures it.
-  - **A *configured-but-not-connected* plugin (env var set, OAuth never completed) is the opposite
-    case: its tool specs ARE still registered and still reach the model in `tools` — only invocation
-    fails, with a `SpotifyAuthRequiredError` message handed back as the tool result.** This was
-    considered a bug (silently including a broken tool in a prompt's context) until the project
-    owner reframed it: don't hide it, surface it. `Canvas.tsx`'s `NodeProperties` now shows an
-    inline MUI `Alert` on any prompt node with `enabledToolsets` including a not-configured or
-    not-connected plugin (fetches `/api/plugins/spotify/status` once on mount) — the workflow author
-    sees *why* a tool will fail before running anything, rather than the tool being silently dropped
-    from context or silently failing at runtime with no visible cause.
+  - **A *configured-but-not-connected* plugin (env var set, OAuth never completed) still has its
+    tool specs registered and reaching the model in `tools` — only invocation fails, with a
+    `SpotifyAuthRequiredError` message handed back as the tool result.** Silently including a
+    broken tool in a prompt's context was flagged as a bug, but the fix isn't to hide the tool —
+    see the workflow-dependency-gate note below.
   - **Toolset enable/disable is deliberately per-prompt-node (`PromptSpec.enabledToolsets`), never
     workflow-level.** Confirmed as the intended design, not just an implementation shortcut: this
     project's whole premise is precise, per-step control over what reaches a given call's context
     (see PLAN.md's "Debuggability at the step level"), and a workflow-wide plugin toggle would cut
     against that — a later node in the same flow might legitimately want a different toolset (or
     none) than an earlier one.
+  - **A workflow-level "missing plugin dependency" check now gates every place a flow can run —
+    UI, interpreter, and compiled script — using one shared primitive rather than three separate
+    ad hoc checks.** `requiredToolsets(graph)` (`packages/core/src/plugin-deps.ts`) scans every
+    node's `enabledToolsets` (union, "state" never appears there since it's a separate field with
+    no external dependency); `findMissingToolsets(registrations, required)` (same file) cross-
+    references that against whatever `ToolRegistration[]` is actually available, using each
+    registration's optional `unavailableReason(): string | undefined` (Spotify's three tools all
+    delegate to one `client.isConnected()` check, wrapped once in `createSpotifyToolset` rather
+    than repeated per tool). `ToolRegistry.missingToolsets(required)` is a thin per-registry
+    wrapper over the same function, for callers (the interpreter) that already have a live
+    registry rather than a raw list.
+    - **UI**: `Canvas.tsx` computes required toolsets from live (possibly unsaved) node state —
+      not the saved graph — against `/api/plugins/status` (a generic, toolset-keyed aggregate;
+      currently just `{spotify: {...}}`, meant to gain a row per plugin rather than move to a real
+      registry until a second plugin actually exists). Shows one workflow-level `Alert` banner
+      (not per-node — a per-node version shipped first and was explicitly rejected: "the UI ...
+      should show 'workflow missing dependency'") and disables Run / Start Stepping. Safe to check
+      against live state because `handleRun`/`handleStep`'s first step both call `handleSave()`
+      before hitting the server, so live and saved state agree by the time either fires.
+    - **Interpreter**: `GraphEngine`'s constructor (`packages/interpreter/src/run-graph.ts`) — hit
+      by both a fresh `runGraph()` call and every `GraphEngine.restore()` in step mode — throws
+      immediately, before any node dispatches, if `run.tools.missingToolsets(requiredToolsets(graph))`
+      is non-empty. Needed `tools: ToolRegistry` added to the `Run` interface
+      (`packages/runtime/src/run.ts`) to reach it. Re-checked on every step-mode restore rather
+      than once at step-start, so a plugin disconnected mid-session is caught on the very next
+      step, not just at the start.
+    - **Server routes** (`routes/flows.ts`): `/run` and `/step-start` both hard-gate with a 409 and
+      a `missing` list before calling `runFlow`/`startStepExecution` at all — belt-and-suspenders
+      with the interpreter check, since the interpreter's throw alone would still create an
+      execution row that immediately flips to "failed" (via the existing `run_failed` fast-fail
+      path) rather than refusing the request outright.
+    - **Compiled script**: this surfaced a real, previously-undetected bug — `compile-graph.ts`'s
+      emitted runtime host was missing a `tools` field *entirely* (no golden fixture had ever
+      exercised `enableStateTools`/`enabledToolsets` through the compiled-script path), so any
+      compiled flow using either would crash with `Cannot read properties of undefined (reading
+      'specsFor')`. Fixed generally: the compiled script now emits
+      `tools: createToolRegistry(stateToolset(state))`, so `enableStateTools` actually works
+      standalone (covered by a new `state-tools` golden parity fixture). Plugin toolsets are a
+      separate story: a standalone script has no server/DB/credential store to source a plugin's
+      OAuth state from, so compiled-script plugin support isn't implemented at all yet. Rather than
+      silently misbehave, `compileGraph` computes `requiredToolsets(graph)` at compile time and
+      embeds it as `REQUIRED_PLUGIN_TOOLSETS`; if non-empty, `main()` prints a clear "not supported
+      in exported scripts" message and exits 1 before touching the scheduler — the flow still
+      exports (the script is a faithful record of the graph), it just refuses to run. Covered by
+      `packages/testing/src/plugin-gate.test.ts`, which actually spawns the compiled script rather
+      than only asserting on the generated source string.

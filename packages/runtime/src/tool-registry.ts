@@ -1,4 +1,5 @@
 import {
+  findMissingToolsets,
   READ_STATE_TOOL,
   WRITE_STATE_TOOL,
   type StateStore,
@@ -32,6 +33,7 @@ export function createToolRegistry(registrations: ToolRegistration[]): ToolRegis
         return `[${name}]: error - ${(err as Error).message}`;
       }
     },
+    missingToolsets: (required) => findMissingToolsets(registrations, required),
   };
 }
 

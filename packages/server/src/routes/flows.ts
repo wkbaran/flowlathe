@@ -1,6 +1,13 @@
 import type { ProviderConfig } from "@flowlathe/compiler";
 import { compileGraph } from "@flowlathe/compiler";
-import { emptyFlowGraph, parseFlowGraph, type Scheduler, type ToolRegistration } from "@flowlathe/core";
+import {
+  emptyFlowGraph,
+  findMissingToolsets,
+  parseFlowGraph,
+  requiredToolsets,
+  type Scheduler,
+  type ToolRegistration,
+} from "@flowlathe/core";
 import { createFlow, getFlow, listFlows, listProviders, saveFlowVersion } from "@flowlathe/persistence";
 import type { Db } from "@flowlathe/persistence";
 import type { FastifyInstance } from "fastify";
@@ -59,6 +66,10 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
   app.post<{ Params: { id: string } }>("/api/flows/:id/run", async (request, reply) => {
     const flow = getFlow(db, request.params.id);
     if (!flow) return reply.code(404).send({ error: "flow not found" });
+    const missing = findMissingToolsets(pluginToolsets ?? [], requiredToolsets(flow.graph));
+    if (missing.length > 0) {
+      return reply.code(409).send({ error: dependencyErrorMessage(missing), missing });
+    }
     const { executionId, branchId } = runFlow({
       db,
       hub,
@@ -73,6 +84,10 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
   app.post<{ Params: { id: string } }>("/api/flows/:id/step-start", async (request, reply) => {
     const flow = getFlow(db, request.params.id);
     if (!flow) return reply.code(404).send({ error: "flow not found" });
+    const missing = findMissingToolsets(pluginToolsets ?? [], requiredToolsets(flow.graph));
+    if (missing.length > 0) {
+      return reply.code(409).send({ error: dependencyErrorMessage(missing), missing });
+    }
     return reply.code(201).send(startStepExecution(db, flow.flowVersionId));
   });
 
@@ -89,4 +104,8 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
       return reply.code(400).send({ error: (err as Error).message });
     }
   });
+}
+
+function dependencyErrorMessage(missing: { toolset: string; reason: string }[]): string {
+  return `workflow is missing required plugin(s): ${missing.map((m) => `${m.toolset} (${m.reason})`).join("; ")}`;
 }

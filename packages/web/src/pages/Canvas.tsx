@@ -41,7 +41,7 @@ import {
   getExecution,
   getExecutionState,
   getFlow,
-  getSpotifyStatus,
+  getPluginStatuses,
   getStateLineage,
   listBranches,
   listModels,
@@ -54,8 +54,8 @@ import {
   stepStart,
   type BranchRecord,
   type ModelRecord,
+  type PluginStatus,
   type ProviderRecord,
-  type SpotifyPluginStatus,
   type StateLineageEdge,
 } from "../api.js";
 import type { NodeStatus } from "../nodes/NodeCard.js";
@@ -96,6 +96,25 @@ const NODE_KIND_OPTIONS: NodeKind[] = [
   "gate",
 ];
 
+/** Mirrors @flowlathe/core's `requiredToolsets(graph)` over live xyflow nodes (rather than a
+ *  saved FlowGraph) so the workflow-dependency banner reacts to edits immediately, before Save —
+ *  Run/Start Stepping always save first, so by the time either fires this always matches what the
+ *  server independently re-checks against the just-saved graph. */
+function requiredToolsetsFrom(ns: Node[]): string[] {
+  const set = new Set<string>();
+  for (const n of ns) {
+    const enabled = (n.data as Record<string, unknown>)["enabledToolsets"];
+    if (Array.isArray(enabled)) {
+      for (const t of enabled) if (typeof t === "string") set.add(t);
+    }
+  }
+  return [...set].sort();
+}
+
+function displayName(toolset: string): string {
+  return toolset.charAt(0).toUpperCase() + toolset.slice(1);
+}
+
 function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
   switch (type) {
     case "prompt":
@@ -131,7 +150,7 @@ export function Canvas() {
   const [exportedScript, setExportedScript] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderRecord[]>([]);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelRecord[]>>({});
-  const [spotifyStatus, setSpotifyStatus] = useState<SpotifyPluginStatus>({ configured: false, connected: false });
+  const [pluginStatuses, setPluginStatuses] = useState<Record<string, PluginStatus>>({});
   const [newNodeKind, setNewNodeKind] = useState<NodeKind>("prompt");
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [suspended, setSuspended] = useState<SuspendedActivation[]>([]);
@@ -161,7 +180,7 @@ export function Canvas() {
       const entries = await Promise.all(list.map(async (p) => [p.id, await listModels(p.id)] as const));
       setModelsByProvider(Object.fromEntries(entries));
     });
-    void getSpotifyStatus().then(setSpotifyStatus);
+    void getPluginStatuses().then(setPluginStatuses);
   }, []);
 
   useEffect(() => () => eventSourceRef.current?.close(), []);
@@ -384,6 +403,13 @@ export function Canvas() {
   }));
   const decoratedEdges = [...edges, ...lineageEdges];
 
+  const missingDeps = requiredToolsetsFrom(nodes).flatMap((toolset) => {
+    const status = pluginStatuses[toolset];
+    if (!status?.configured) return [`${displayName(toolset)} plugin is not configured on the server`];
+    if (!status.connected) return [`${displayName(toolset)} is not connected — connect it from Providers`];
+    return [];
+  });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <AppBar position="static">
@@ -410,10 +436,15 @@ export function Canvas() {
           <Button variant="contained" color="secondary" onClick={handleSave} disabled={saving}>
             Save
           </Button>
-          <Button variant="contained" onClick={handleRun}>
+          <Button variant="contained" onClick={handleRun} disabled={missingDeps.length > 0}>
             Run
           </Button>
-          <Button variant="contained" color="warning" onClick={() => void handleStep()}>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={() => void handleStep()}
+            disabled={!stepSession && missingDeps.length > 0}
+          >
             {stepSession ? "Step" : "Start Stepping"}
           </Button>
           <Button variant="outlined" color="inherit" onClick={handleExport}>
@@ -421,6 +452,12 @@ export function Canvas() {
           </Button>
         </Toolbar>
       </AppBar>
+      {missingDeps.length > 0 && (
+        <Alert severity="warning" data-testid="workflow-dependency-alert">
+          Workflow missing dependency: {missingDeps.join("; ")}. Fix this from{" "}
+          <Link href="/providers">Providers</Link> before running.
+        </Alert>
+      )}
       {theme.palette.mode === "dark" && (
         <style>{`
           .react-flow__controls-button {
@@ -458,7 +495,6 @@ export function Canvas() {
                   node={selectedNode}
                   providers={providers}
                   modelsByProvider={modelsByProvider}
-                  spotifyStatus={spotifyStatus}
                   otherNodes={nodes.filter((n) => n.id !== selectedNode.id)}
                   onChange={updateSelectedNodeData}
                   onParentChange={updateSelectedNodeParent}
@@ -628,15 +664,13 @@ function NodeProperties(props: {
   node: Node;
   providers: ProviderRecord[];
   modelsByProvider: Record<string, ModelRecord[]>;
-  spotifyStatus: SpotifyPluginStatus;
   otherNodes: Node[];
   onChange: (patch: Record<string, unknown>) => void;
   onParentChange: (parentId: string) => void;
 }) {
-  const { node, providers, modelsByProvider, spotifyStatus, otherNodes, onChange, onParentChange } = props;
+  const { node, providers, modelsByProvider, otherNodes, onChange, onParentChange } = props;
   const data = node.data as Record<string, unknown>;
   const type = node.type as NodeKind;
-  const spotifyEnabled = ((data["enabledToolsets"] as string[] | undefined) ?? []).includes("spotify");
 
   return (
     <>
@@ -704,18 +738,6 @@ function NodeProperties(props: {
             }
             label="Enable Spotify tools (search/playlists/library)"
           />
-          {spotifyEnabled && !spotifyStatus.configured && (
-            <Alert severity="warning" data-testid="spotify-not-configured-alert">
-              Spotify plugin is not configured on the server — this node's model won't see these
-              tools until an operator sets <code>SPOTIFY_CLIENT_ID</code>.
-            </Alert>
-          )}
-          {spotifyEnabled && spotifyStatus.configured && !spotifyStatus.connected && (
-            <Alert severity="warning" data-testid="spotify-not-connected-alert">
-              Spotify is configured but not connected — tool calls will fail until you{" "}
-              <Link href="/providers">connect it from Providers</Link>.
-            </Alert>
-          )}
           <TextField
             size="small"
             type="number"

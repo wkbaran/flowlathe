@@ -5,6 +5,7 @@ import {
   type PromptResult,
   type RuntimeHost,
   type StateStore,
+  type ToolRegistry,
 } from "@flowlathe/core";
 import { type GateResult, type GateSpec, runGate } from "@flowlathe/node-gate";
 import { type LoopSpec } from "@flowlathe/node-loop";
@@ -20,6 +21,7 @@ export interface Run {
   readonly state: StateStore;
   readonly llmConfig: LlmConfigStore;
   readonly context: ContextStore;
+  readonly tools: ToolRegistry;
   prompt(spec: PromptSpec, inputs: Record<string, string>): Promise<PromptResult>;
   route(spec: RouterSpec, inputs: Record<string, string>): Promise<RouterResult>;
   merge(spec: MergeSpec, inputs: Record<string, string | undefined>): Promise<MergeResult>;
@@ -46,6 +48,7 @@ export function createRun(opts: CreateRunOptions): Run {
     state: host.state,
     llmConfig: host.llmConfig,
     context: host.context,
+    tools: host.tools,
     prompt: (spec, inputs) => runPrompt(host, spec, inputs),
     route: (spec, inputs) => runRouter(host, spec, inputs),
     merge: (spec, inputs) => runMerge(host, spec, inputs),

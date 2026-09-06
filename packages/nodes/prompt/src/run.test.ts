@@ -29,6 +29,7 @@ function fakeToolRegistry(state: StateStore): ToolRegistry {
       }
       return `[${name}]: error - unknown tool`;
     },
+    missingToolsets: () => [],
   };
 }
 

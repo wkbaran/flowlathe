@@ -6,11 +6,15 @@ const meta = { activationKey: "node-1" };
 
 /** A SpotifyClient whose `request` is fully mocked — these tests exercise the tools' argument
  *  parsing/dispatch, not SpotifyClient itself (that's client.test.ts's job). */
-function fakeClient(handler: (method: string, path: string, opts: SpotifyRequestOptions) => unknown): SpotifyClient {
+function fakeClient(
+  handler: (method: string, path: string, opts: SpotifyRequestOptions) => unknown,
+  opts: { connected?: boolean } = {},
+): SpotifyClient {
   const client = Object.create(SpotifyClient.prototype) as SpotifyClient;
   (client as unknown as { request: SpotifyClient["request"] }).request = vi.fn(
-    async (method: string, path: string, opts: SpotifyRequestOptions = {}) => handler(method, path, opts),
+    async (method: string, path: string, reqOpts: SpotifyRequestOptions = {}) => handler(method, path, reqOpts),
   ) as unknown as SpotifyClient["request"];
+  (client as unknown as { isConnected: SpotifyClient["isConnected"] }).isConnected = () => opts.connected ?? true;
   return client;
 }
 
@@ -174,5 +178,18 @@ describe("spotify_library", () => {
       "spotify_library",
     );
     await tool.handler({ action: "remove", ids: "spotify:track:abc" }, meta);
+  });
+});
+
+describe("createSpotifyToolset unavailableReason", () => {
+  it("reports no reason (available) when the client is connected", () => {
+    const toolset = createSpotifyToolset(fakeClient(() => ({}), { connected: true }));
+    for (const reg of toolset) expect(reg.unavailableReason?.()).toBeUndefined();
+  });
+
+  it("reports a reason on every tool when the client isn't connected", () => {
+    const toolset = createSpotifyToolset(fakeClient(() => ({}), { connected: false }));
+    expect(toolset).toHaveLength(3);
+    for (const reg of toolset) expect(reg.unavailableReason?.()).toMatch(/not connected/);
   });
 });

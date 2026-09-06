@@ -28,6 +28,14 @@ export function registerSpotifyPluginRoutes(app: FastifyInstance, deps: SpotifyR
     connected: hasPluginCredential(db, "spotify"),
   }));
 
+  /** Generic aggregate the UI's workflow-dependency check reads (see Canvas.tsx) — keyed by
+   *  toolset name so it doesn't need to know "spotify" specifically. Only one plugin exists today,
+   *  so this lives next to its route; move it to a real plugin registry/aggregator once a second
+   *  plugin needs a status row here too. */
+  app.get("/api/plugins/status", async () => ({
+    spotify: { configured: config !== undefined, connected: hasPluginCredential(db, "spotify") },
+  }));
+
   app.get("/api/plugins/spotify/oauth/start", async (_request, reply) => {
     if (!config) return reply.code(400).send({ error: "Spotify plugin is not configured (set SPOTIFY_CLIENT_ID)" });
     const pkce = generatePkcePair();

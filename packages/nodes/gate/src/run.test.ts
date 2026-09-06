@@ -20,7 +20,7 @@ function fakeCtx(): { ctx: RuntimeHost; events: RunEvent[] } {
       },
     },
     context: { get: () => [], append: () => undefined, replace: () => undefined },
-    tools: { specsFor: () => [], invoke: async () => "" },
+    tools: { specsFor: () => [], invoke: async () => "", missingToolsets: () => [] },
   };
   return { ctx, events };
 }

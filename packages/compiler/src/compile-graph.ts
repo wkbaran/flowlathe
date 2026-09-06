@@ -1,4 +1,4 @@
-import type { FlowGraph, FlowNode } from "@flowlathe/core";
+import { requiredToolsets, type FlowGraph, type FlowNode } from "@flowlathe/core";
 import { emitTable, schemaTable } from "./emit-table.js";
 import { topoLevels } from "./topo-levels.js";
 
@@ -88,6 +88,7 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   ].filter(Boolean);
 
   const stateDeclsLiteral = JSON.stringify(graph.state);
+  const requiredPluginToolsetsLiteral = JSON.stringify(requiredToolsets(graph));
 
   return `import type { RunEvent } from "@flowlathe/core";
 import {
@@ -96,7 +97,9 @@ import {
   createRun,
   createStateStore,
   createSuspendRegistry,
+  createToolRegistry,
   InMemoryBlobStore,
+  stateToolset,
 } from "@flowlathe/runtime";
 import { SimpleScheduler${adapterImports.length ? `, ${adapterImports.join(", ")}` : ""} } from "@flowlathe/providers";
 
@@ -106,20 +109,36 @@ ${specEntries}
 
 const STATE_DECLS = ${stateDeclsLiteral};
 
+// Plugin toolsets (e.g. "spotify") aren't supported in exported scripts yet — a compiled script
+// has no server, DB, or credential store to source a plugin's OAuth/config from. A flow using one
+// still exports (the script is a faithful record of the graph), but refuses to run rather than
+// crashing confusingly on a node that expects tools no registry here will ever provide.
+const REQUIRED_PLUGIN_TOOLSETS = ${requiredPluginToolsetsLiteral};
+
 async function main() {
+  if (REQUIRED_PLUGIN_TOOLSETS.length > 0) {
+    console.error(
+      \`this flow requires plugin toolset(s) not supported in exported scripts: \${REQUIRED_PLUGIN_TOOLSETS.join(", ")}\`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const scheduler = new SimpleScheduler({
 ${providerEntries}
   });
   const emit = (event: RunEvent): void => console.log(JSON.stringify(event));
+  const state = createStateStore(emit, { decls: STATE_DECLS });
   const rt = createRun({
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
       emit,
       clock: { now: () => Date.now() },
-      state: createStateStore(emit, { decls: STATE_DECLS }),
+      state,
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
+      tools: createToolRegistry(stateToolset(state)),
       ...createSuspendRegistry(),
     },
   });

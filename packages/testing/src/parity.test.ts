@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
 import { mapFanoutGraph, mapFanoutResponses } from "./golden/map-fanout.js";
 import { routerMergeGraph, routerMergeResponses } from "./golden/router-merge.js";
+import { stateToolsGraph, stateToolsResponses } from "./golden/state-tools.js";
 import { twoNodeChainGraph, twoNodeChainResponses } from "./golden/two-node-chain.js";
 import { traceViaCompiledScript, traceViaInterpreter } from "./parity.js";
 
@@ -49,6 +50,23 @@ describe("interpreter/compiler parity", () => {
       expect(viaCompiled).toEqual(viaInterpreter);
       const mapEntry = viaInterpreter.find((e) => e.nodeId === "m");
       expect(mapEntry && JSON.parse(mapEntry.output)).toEqual(["X_RESULT", "Y_RESULT", "Z_RESULT"]);
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a node with enableStateTools using the read_state/write_state tool loop",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(stateToolsGraph, stateToolsResponses);
+      const viaCompiled = traceViaCompiledScript(stateToolsGraph, stateToolsResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter).toEqual([
+        {
+          nodeId: "a",
+          renderedPrompt: 'CALL_TOOL: write_state {"entry":"notes","value":"hello"}',
+          output: "DONE",
+        },
+      ]);
     },
     15_000,
   );

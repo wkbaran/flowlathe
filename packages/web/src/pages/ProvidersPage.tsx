@@ -28,10 +28,10 @@ import {
   listModels,
   listProviders,
   type ModelRecord,
+  type PluginStatus,
   type ProviderKind,
   type ProviderRecord,
   type SchedulerStats,
-  type SpotifyPluginStatus,
 } from "../api.js";
 
 const KINDS: ProviderKind[] = ["mock", "ollama", "openai-compat"];
@@ -40,7 +40,7 @@ export function ProvidersPage() {
   const [providers, setProviders] = useState<ProviderRecord[]>([]);
   const [stats, setStats] = useState<Record<string, SchedulerStats>>({});
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelRecord[]>>({});
-  const [spotifyStatus, setSpotifyStatus] = useState<SpotifyPluginStatus>({ configured: false, connected: false });
+  const [spotifyStatus, setSpotifyStatus] = useState<PluginStatus>({ configured: false, connected: false });
 
   const [name, setName] = useState("");
   const [kind, setKind] = useState<ProviderKind>("openai-compat");

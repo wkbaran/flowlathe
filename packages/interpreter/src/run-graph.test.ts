@@ -346,3 +346,35 @@ describe("runGraph — map", () => {
     ]);
   });
 });
+
+describe("runGraph — missing plugin dependency gate", () => {
+  it("throws before any node dispatches when a node requires an unregistered toolset", async () => {
+    const { run } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [node("a", "prompt", { ...promptData("hi"), enabledToolsets: ["spotify"] })],
+      edges: [],
+      state: [],
+    };
+    await expect(runGraph({ graph, run })).rejects.toThrow(/missing required plugin.*spotify/);
+  });
+
+  it("does not throw when the graph requires nothing", async () => {
+    const { run } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [node("a", "prompt", promptData("hi"))],
+      edges: [],
+      state: [],
+    };
+    await expect(runGraph({ graph, run })).resolves.toBeDefined();
+  });
+
+  it("does not throw when the required toolset is actually registered", async () => {
+    const { run } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [node("a", "prompt", { ...promptData("hi"), enabledToolsets: ["state"] })],
+      edges: [],
+      state: [],
+    };
+    await expect(runGraph({ graph, run })).resolves.toBeDefined();
+  });
+});

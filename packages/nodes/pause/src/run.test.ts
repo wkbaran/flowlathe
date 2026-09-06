@@ -20,7 +20,7 @@ describe("runPause", () => {
       state: { read: () => undefined, write: () => undefined },
       llmConfig: { get: () => ({}), set: () => undefined },
       context: { get: () => [], append: () => undefined, replace: () => undefined },
-      tools: { specsFor: () => [], invoke: async () => "" },
+      tools: { specsFor: () => [], invoke: async () => "", missingToolsets: () => [] },
     };
 
     const promise = runPause(ctx, { id: "p", message: "hold on" }, { input: "carried-value" });

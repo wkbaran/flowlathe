@@ -3,6 +3,7 @@ import {
   isNever,
   isValue,
   neverSlot,
+  requiredToolsets,
   valueSlot,
   type FlowGraph,
   type FlowNode,
@@ -74,6 +75,17 @@ export class GraphEngine {
 
     this.outputs = initialOutputs ?? new Map();
     this.rank = computeTopoRank(this.nodesById, this.edgesByTargetPort);
+
+    // Fails before any node dispatches — both fresh runs (`runGraph`) and every step-mode restore
+    // (`GraphEngine.restore`, called once per `stepOnce`) go through this constructor, so a
+    // workflow that needs a plugin toolset the server doesn't have configured never gets to run a
+    // single node, and a plugin disconnected mid-stepping-session is caught on the very next step.
+    const missing = run.tools.missingToolsets(requiredToolsets(graph));
+    if (missing.length > 0) {
+      throw new Error(
+        `workflow is missing required plugin(s): ${missing.map((m) => `${m.toolset} (${m.reason})`).join("; ")}`,
+      );
+    }
   }
 
   static restore(graph: FlowGraph, run: Run, snapshot: EngineSnapshot): GraphEngine {

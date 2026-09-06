@@ -50,6 +50,17 @@ describe("createToolRegistry", () => {
     const result = await registry.invoke("boom", {}, { activationKey: "node-1" });
     expect(result).toBe("[boom]: error - kaboom");
   });
+
+  it("delegates missingToolsets to the shared core helper over its own registrations", () => {
+    const registry = createToolRegistry([
+      { toolset: "a", spec: spec("tool_a"), handler: () => "a", unavailableReason: () => "not ready" },
+    ]);
+    expect(registry.missingToolsets(["a"])).toEqual([{ toolset: "a", reason: "not ready" }]);
+    expect(registry.missingToolsets(["b"])).toEqual([
+      { toolset: "b", reason: expect.stringContaining("not configured") },
+    ]);
+    expect(registry.missingToolsets([])).toEqual([]);
+  });
 });
 
 describe("stateToolset", () => {

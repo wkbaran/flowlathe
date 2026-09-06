@@ -31,6 +31,10 @@ export interface ToolInvokeMeta {
 export interface ToolRegistry {
   specsFor(toolsets: string[]): ToolSpec[];
   invoke(name: string, args: Record<string, unknown>, meta: ToolInvokeMeta): Promise<string>;
+  /** Which of `required` toolsets aren't actually usable right now (not configured at all, or
+   *  configured but reporting itself unavailable) — see `findMissingToolsets` in ./plugin-deps.js
+   *  for the shared implementation every `ToolRegistry` delegates to. */
+  missingToolsets(required: string[]): MissingToolset[];
 }
 
 /** One named tool's contribution to a ToolRegistry, grouped by toolset. Defined here (not in
@@ -40,6 +44,15 @@ export interface ToolRegistration {
   toolset: string;
   spec: ToolSpec;
   handler: (args: Record<string, unknown>, meta: ToolInvokeMeta) => Promise<string> | string;
+  /** Returns a human-readable reason this toolset can't be used right now (e.g. "Spotify is not
+   *  connected"), or undefined/omitted when it's ready. A toolset with no external dependency
+   *  (e.g. the built-in "state" toolset) simply never sets this. */
+  unavailableReason?: () => string | undefined;
+}
+
+export interface MissingToolset {
+  toolset: string;
+  reason: string;
 }
 
 export interface ProviderCallRequest {

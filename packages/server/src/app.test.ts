@@ -118,6 +118,59 @@ describe("run + export", () => {
   });
 });
 
+async function createFlowRequiringToolset(toolset: string): Promise<string> {
+  const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Needs plugin" } })).json();
+  const graph = {
+    nodes: [
+      {
+        id: "a",
+        type: "prompt",
+        position: { x: 0, y: 0 },
+        data: { template: "hi", providerId: "mock", modelId: "m", enabledToolsets: [toolset] },
+      },
+    ],
+    edges: [],
+  };
+  await app.inject({ method: "PUT", url: `/api/flows/${created.id}`, payload: { graph } });
+  return created.id;
+}
+
+describe("workflow dependency gate", () => {
+  it("refuses to run a flow that requires a toolset nothing has registered", async () => {
+    const flowId = await createFlowRequiringToolset("spotify");
+    const res = await app.inject({ method: "POST", url: `/api/flows/${flowId}/run` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().missing).toEqual([{ toolset: "spotify", reason: expect.stringContaining("not configured") }]);
+  });
+
+  it("refuses to start a step session for the same reason", async () => {
+    const flowId = await createFlowRequiringToolset("spotify");
+    const res = await app.inject({ method: "POST", url: `/api/flows/${flowId}/step-start` });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("does not gate a flow requiring a toolset that IS registered", async () => {
+    const credentialKey = randomBytes(32);
+    const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
+    const appWithPlugin = buildApp({
+      db: opened.db,
+      credentialKey,
+      schedulerRegistry,
+      pluginToolsets: [
+        {
+          toolset: "custom",
+          spec: { name: "custom_tool", description: "d", parameters: { type: "object", properties: {} } },
+          handler: () => "ok",
+        },
+      ],
+    });
+    const flowId = await createFlowRequiringToolset("custom");
+    const res = await appWithPlugin.inject({ method: "POST", url: `/api/flows/${flowId}/run` });
+    expect(res.statusCode).toBe(202);
+    await appWithPlugin.close();
+  });
+});
+
 async function waitForFinished(executionId: string): Promise<void> {
   let status: string | undefined;
   for (let i = 0; i < 50 && status !== "finished"; i++) {

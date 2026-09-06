@@ -230,15 +230,22 @@ export function getStateLineage(executionId: string, branchId: string): Promise<
   );
 }
 
-export interface SpotifyPluginStatus {
+export interface PluginStatus {
   configured: boolean;
   connected: boolean;
 }
 
-export function getSpotifyStatus(): Promise<SpotifyPluginStatus> {
+export function getSpotifyStatus(): Promise<PluginStatus> {
   return fetch("/api/plugins/spotify/status").then((res) => json(res));
 }
 
 export function disconnectSpotify(): Promise<void> {
   return fetch("/api/plugins/spotify/disconnect", { method: "POST" }).then(() => undefined);
+}
+
+/** Keyed by toolset name (e.g. "spotify") — the workflow-level dependency check in Canvas.tsx
+ *  reads this to decide which of a flow's `enabledToolsets` are actually usable, without needing
+ *  to know about any specific plugin. */
+export function getPluginStatuses(): Promise<Record<string, PluginStatus>> {
+  return fetch("/api/plugins/status").then((res) => json(res));
 }
