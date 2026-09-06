@@ -102,3 +102,59 @@ rediscover them the hard way.
   the repo root against the explicit config, via the locally pinned binary —
   `node_modules/.bin/playwright test --config=playwright/playwright.config.ts` — which is also
   exactly what the root `e2e` npm script does. Don't `cd playwright && pnpm exec playwright test`.
+- **`PromptNodeView`'s target handle is a single hardcoded `id="input"`, regardless of the
+  template's actual `{{varName}}`.** Every prompt-consuming edge in this codebase names its
+  template variable `input` for exactly this reason — the interpreter/compiler both resolve ports
+  by matching `extractTemplateVars(template)` against `edge.targetHandle`, so a template like
+  `{{ctx}}` wired via the canvas's one visual handle produces an edge with `targetHandle: "input"`
+  that never satisfies the `ctx` port, and the node hangs forever ("cycle detected or missing
+  upstream node"). Wire a PromptNode from anything (including a ContextTransform's `output` port)
+  using `{{input}}` as the template variable name, not a descriptive one.
+- **A "State declaration UI, merge rules, the built-in read_state/write_state tool, and all four
+  context transforms" slice (append/drop-before/filter-role/summarize) landed with these scope
+  decisions, each documented because a future agent extending State or Context could get bitten:**
+  - **Tool-calling exists only for the two built-in State tools, not as a general mechanism.**
+    `ProviderCallRequest.tools`/`ProviderCallResult.toolCalls` are real (both `MockProviderAdapter`
+    and `OllamaProviderAdapter` support them — Ollama by switching to `/api/chat`, since `/api/generate`
+    has no `tools` param, untested against a live model), but `runPrompt`'s tool-loop only knows
+    `read_state`/`write_state` by name. General tool/MCP support is still Slice 6.
+  - **`MockProviderAdapter` simulates "the model decided to call a tool" via a literal sentinel in
+    the prompt text**: `CALL_TOOL: <name> <jsonArgs>` on its own line, honored once (suppressed by
+    checking for a `[tool calls]` marker the tool-loop appends to the follow-up prompt, so it
+    doesn't refire forever). This is a testing convention, not how a real model's tool-calling
+    works — it exists because the default (no-table) mock mode is a pure echo with no reasoning of
+    its own, and parity/e2e tests need a deterministic way to exercise the tool-loop.
+  - **A context is a plain `ContextMessage[]` flowing through ports as JSON** (`packages/core/src/context.ts`),
+    not the `contexts`/`messages`/`context_transform_calls` DB tables' actual runtime representation
+    — those tables exist purely as persisted lineage (written once per `context_transform` event,
+    read by nothing yet), not as the live value a node operates on. A `ContextTransform` node has
+    two output ports: `output` (flat text, `role: content` per line — for a plain-string consumer
+    like a PromptNode's `{{input}}`) and `context` (the JSON, for chaining into another
+    ContextTransform). `startsNewContext: true` means the node has NO `context` input port at all
+    (not an optional/unwired one) — see the next point for why that distinction matters.
+  - **Every port a node declares via `inputPorts()` must have a real incoming edge, always** — the
+    interpreter's `isReady()` requires ALL declared ports (even ones marked `required: false`) to be
+    non-`empty`, and a port with zero edges stays `empty` forever. "Optional" only ever meant
+    "allowed to resolve to `never`," never "allowed to have no edge." This predates Slice 5 (Merge's
+    `in1`/`in2` already relied on it) but Slice 5 is the first place a node's port *list itself*
+    varies by config (`ContextTransform.startsNewContext`), making the distinction load-bearing for
+    the first time.
+  - **The compiler's `accessorExpr` used to hardcode `.output` as the field read off any "default"
+    node's result, ignoring `edge.sourceHandle` entirely** — harmless while every such node kind had
+    exactly one output port literally called `output`, but wrong for `ContextTransform` (`output` +
+    `context`). Fixed to read `edge.sourceHandle` (falling back to `"output"` for the no-edge
+    terminal-node case). Interpreter parity was never at risk since `portSlot()` already indexed by
+    the real port name — only codegen needed the fix.
+  - **State does not fork across branches.** `state_writes`/`state_reads` carry `branch_id`, but
+    `stepBack` (Slice 4) never copies a branch's state rows onto the new fork — a step-mode
+    `StateStore` is rebuilt fresh on every `stepOnce` call by replaying only `listStateWritesForBranch`
+    for the *current* branch (`packages/runtime/src/state-store.ts`'s `replay` option), so a forked
+    branch's state starts empty rather than inheriting pre-fork writes. Port-value forking has no
+    such gap (Slice 4 got that right); state does, for now — walking `branches.parent_branch_id` to
+    accumulate ancestor writes is the fix, not yet built.
+  - **"Dashed lineage edges" render an observed, not a static, dependency.** State reads/writes
+    have no graph edge between writer and reader node, so nothing can be inferred from the graph
+    alone — the canvas fetches `/api/executions/:id/state-lineage` (joins `state_writes`/`state_reads`
+    by `entry` + `seq`/`seqSeen`, resolving each side's owning node via `step_id -> steps.node_id`)
+    after a run/step/branch-switch and overlays synthetic dashed `Edge` objects, never merged into
+    the saved graph.
