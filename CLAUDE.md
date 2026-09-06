@@ -239,3 +239,18 @@ rediscover them the hard way.
     at the cost of a model never being told the tool exists at all until an operator sets the env
     var — a deliberate v1 tradeoff, revisit if a flow author needs to *discover* a tool before an
     operator configures it.
+  - **A *configured-but-not-connected* plugin (env var set, OAuth never completed) is the opposite
+    case: its tool specs ARE still registered and still reach the model in `tools` — only invocation
+    fails, with a `SpotifyAuthRequiredError` message handed back as the tool result.** This was
+    considered a bug (silently including a broken tool in a prompt's context) until the project
+    owner reframed it: don't hide it, surface it. `Canvas.tsx`'s `NodeProperties` now shows an
+    inline MUI `Alert` on any prompt node with `enabledToolsets` including a not-configured or
+    not-connected plugin (fetches `/api/plugins/spotify/status` once on mount) — the workflow author
+    sees *why* a tool will fail before running anything, rather than the tool being silently dropped
+    from context or silently failing at runtime with no visible cause.
+  - **Toolset enable/disable is deliberately per-prompt-node (`PromptSpec.enabledToolsets`), never
+    workflow-level.** Confirmed as the intended design, not just an implementation shortcut: this
+    project's whole premise is precise, per-step control over what reaches a given call's context
+    (see PLAN.md's "Debuggability at the step level"), and a workflow-wide plugin toggle would cut
+    against that — a later node in the same flow might legitimately want a different toolset (or
+    none) than an earlier one.

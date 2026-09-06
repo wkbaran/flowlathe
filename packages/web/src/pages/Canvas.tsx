@@ -1,5 +1,6 @@
 import type { FlowEdge, FlowNode, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
 import {
+  Alert,
   AppBar,
   Box,
   Button,
@@ -9,6 +10,7 @@ import {
   DialogTitle,
   Divider,
   FormControlLabel,
+  Link,
   List,
   ListItem,
   ListItemText,
@@ -39,6 +41,7 @@ import {
   getExecution,
   getExecutionState,
   getFlow,
+  getSpotifyStatus,
   getStateLineage,
   listBranches,
   listModels,
@@ -52,6 +55,7 @@ import {
   type BranchRecord,
   type ModelRecord,
   type ProviderRecord,
+  type SpotifyPluginStatus,
   type StateLineageEdge,
 } from "../api.js";
 import type { NodeStatus } from "../nodes/NodeCard.js";
@@ -127,6 +131,7 @@ export function Canvas() {
   const [exportedScript, setExportedScript] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderRecord[]>([]);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelRecord[]>>({});
+  const [spotifyStatus, setSpotifyStatus] = useState<SpotifyPluginStatus>({ configured: false, connected: false });
   const [newNodeKind, setNewNodeKind] = useState<NodeKind>("prompt");
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [suspended, setSuspended] = useState<SuspendedActivation[]>([]);
@@ -156,6 +161,7 @@ export function Canvas() {
       const entries = await Promise.all(list.map(async (p) => [p.id, await listModels(p.id)] as const));
       setModelsByProvider(Object.fromEntries(entries));
     });
+    void getSpotifyStatus().then(setSpotifyStatus);
   }, []);
 
   useEffect(() => () => eventSourceRef.current?.close(), []);
@@ -452,6 +458,7 @@ export function Canvas() {
                   node={selectedNode}
                   providers={providers}
                   modelsByProvider={modelsByProvider}
+                  spotifyStatus={spotifyStatus}
                   otherNodes={nodes.filter((n) => n.id !== selectedNode.id)}
                   onChange={updateSelectedNodeData}
                   onParentChange={updateSelectedNodeParent}
@@ -621,13 +628,15 @@ function NodeProperties(props: {
   node: Node;
   providers: ProviderRecord[];
   modelsByProvider: Record<string, ModelRecord[]>;
+  spotifyStatus: SpotifyPluginStatus;
   otherNodes: Node[];
   onChange: (patch: Record<string, unknown>) => void;
   onParentChange: (parentId: string) => void;
 }) {
-  const { node, providers, modelsByProvider, otherNodes, onChange, onParentChange } = props;
+  const { node, providers, modelsByProvider, spotifyStatus, otherNodes, onChange, onParentChange } = props;
   const data = node.data as Record<string, unknown>;
   const type = node.type as NodeKind;
+  const spotifyEnabled = ((data["enabledToolsets"] as string[] | undefined) ?? []).includes("spotify");
 
   return (
     <>
@@ -695,6 +704,18 @@ function NodeProperties(props: {
             }
             label="Enable Spotify tools (search/playlists/library)"
           />
+          {spotifyEnabled && !spotifyStatus.configured && (
+            <Alert severity="warning" data-testid="spotify-not-configured-alert">
+              Spotify plugin is not configured on the server — this node's model won't see these
+              tools until an operator sets <code>SPOTIFY_CLIENT_ID</code>.
+            </Alert>
+          )}
+          {spotifyEnabled && spotifyStatus.configured && !spotifyStatus.connected && (
+            <Alert severity="warning" data-testid="spotify-not-connected-alert">
+              Spotify is configured but not connected — tool calls will fail until you{" "}
+              <Link href="/providers">connect it from Providers</Link>.
+            </Alert>
+          )}
           <TextField
             size="small"
             type="number"
