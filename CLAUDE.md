@@ -76,15 +76,44 @@ rediscover them the hard way.
   `emitLoopOrMap`) rather than importing `activationKey` — if that format ever changes, both
   places need updating or the parity harness's Map/Loop fixtures will silently diverge without
   either side erroring.
-- **Compiled-script Router branches are exactly one node deep before converging (v1 scope gap,
-  interpreter has no such limit).** `compile-graph.ts` only special-cases nodes *directly* targeted
-  by a Router edge (guarding them with `if/else if` and declaring them `let ... | undefined`);
-  anything further downstream in a branch is emitted as an unconditional call that will throw on
-  `undefined.output` at runtime if that branch wasn't taken. The interpreter's PortSlot propagation
-  has no such restriction — it handles arbitrarily long/branching chains correctly. Don't add a
-  golden parity fixture with a multi-node-deep branch without extending the compiler's guard
-  propagation first (a general dominator-frontier walk), or the compiled path will crash where the
-  interpreter succeeds.
+- **Compiled-script Router branches now guard to arbitrary depth, including nested routers
+  (resolved; was a known v1 gap — see git history for the old one-hop `branchNodeIds` design).**
+  `compile-graph.ts` computes each node's `Scope` — the ordered list of router-branch `Guard`s
+  that must hold for it to run — via `computeScopes`: one forward pass over topological order,
+  where a node's scope is the `commonPrefix` (closest-common-ancestor) of its inputs' scopes,
+  plus one more `Guard` if the node is itself a direct router-branch target. This composes
+  correctly for nested routers (a router inside another router's branch just inherits that
+  branch's guard and appends its own) and reconvergence (a Merge fed by two sibling branches
+  gets `commonPrefix` diverging at the router that split them, landing back at the shared
+  ancestor scope) with no special-casing for either. `emitSequential`/`emitScope` then hoist
+  every conditionally-scoped node's `let` in one flat pre-pass (decoupled from which router
+  "owns" it — a per-router hoist walking transitive descendants would double-declare a node
+  nested inside two routers) and recursively emit nested `if`/`else if` blocks matching each
+  node's scope, to arbitrary depth. The `.`/`?.` decision was deliberately simplified to depend
+  only on whether the *source* node has any non-empty scope at all — not a relational
+  comparison between reader and source scopes — matching this codebase's existing convention of
+  always using `?.` for a hoisted variable even where same-branch safety could be proven; this
+  sidesteps needing per-read-site relational reasoning entirely, at the cost of a few
+  technically-unnecessary `?.`s in generated code (functionally identical, since `?.` on a
+  defined value just returns the value).
+  - **Known, deliberately unhandled residual edge cases**: (1) a node fed only by mutually-
+    exclusive branches of two *different* routers with no Merge in between lands at scope `[]`
+    (unconditional, both inputs optional) — correct as far as it goes, but the compiler has no
+    `required`-port metadata (`NodeEmitter.inputPorts` returns bare names, unlike the
+    interpreter's `registry[...].inputPorts`) to detect that such a node would actually run with
+    `undefined` in a field it needs; this is pre-existing (the 1-hop version of this shape had
+    the identical gap) and would need compiler-visible `required` metadata to fix. (2) if a
+    single router wires two different routes to the literal same downstream node, the internal
+    `branchGuard` map's last-write-wins, so that node's scope reflects only one of the two
+    branches — a very unusual, redundant graph shape (the router already encodes the choice),
+    left unhandled.
+  - Golden fixtures pinning this: `packages/testing/src/golden/router-deep-branch.ts` (a 3-node
+    chain inside one branch, deliberately on the branch that ISN'T taken — picking the taken
+    branch as the deep one would miss the bug entirely, since the old one-hop code's
+    unconditional-but-coincidentally-correct execution only breaks when the deep chain's own
+    inputs are genuinely absent) and `router-nested.ts` (a router inside another router's
+    branch, with reconvergence at both the inner and outer level). Both were verified to
+    actually fail against the pre-fix compiler (not just pass vacuously) before being kept.
 - **A step-mode execution must resolve the graph it steps against by the flow's CURRENT (latest-
   saved) version, not the version pinned at `step-start`.** Editing a node's template mid-debug-
   session and clicking Save creates a new `flow_versions` row; the running execution's own

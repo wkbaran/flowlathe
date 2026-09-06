@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
 import { mapFanoutGraph, mapFanoutResponses } from "./golden/map-fanout.js";
+import { routerDeepBranchGraph, routerDeepBranchResponses } from "./golden/router-deep-branch.js";
 import { routerMergeGraph, routerMergeResponses } from "./golden/router-merge.js";
+import { routerNestedGraph, routerNestedResponses } from "./golden/router-nested.js";
 import { stateToolsGraph, stateToolsResponses } from "./golden/state-tools.js";
 import { twoNodeChainGraph, twoNodeChainResponses } from "./golden/two-node-chain.js";
 import { traceViaCompiledScript, traceViaInterpreter } from "./parity.js";
@@ -38,6 +40,34 @@ describe("interpreter/compiler parity", () => {
       const viaCompiled = traceViaCompiledScript(routerMergeGraph, routerMergeResponses);
       expect(viaCompiled).toEqual(viaInterpreter);
       expect(viaInterpreter.map((e) => e.nodeId)).not.toContain("proseAnswer");
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a router branch 3 nodes deep before reconverging, plus a consumer after the merge",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(routerDeepBranchGraph, routerDeepBranchResponses);
+      const viaCompiled = traceViaCompiledScript(routerDeepBranchGraph, routerDeepBranchResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      const nodeIds = viaInterpreter.map((e) => e.nodeId);
+      expect(nodeIds).not.toContain("codeAnswer");
+      expect(nodeIds).not.toContain("codeRefine");
+      expect(nodeIds).not.toContain("codeFinal");
+      expect(viaInterpreter.find((e) => e.nodeId === "final")?.output).toBe("ALL_DONE");
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a router nested inside another router's branch, with two levels of reconvergence",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(routerNestedGraph, routerNestedResponses);
+      const viaCompiled = traceViaCompiledScript(routerNestedGraph, routerNestedResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter.map((e) => e.nodeId)).not.toContain("innerY");
+      expect(viaInterpreter.map((e) => e.nodeId)).not.toContain("otherBranch");
+      expect(viaInterpreter.find((e) => e.nodeId === "finalConsumer")?.output).toBe("ALL_DONE");
     },
     15_000,
   );

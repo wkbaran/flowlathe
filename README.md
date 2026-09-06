@@ -120,19 +120,14 @@ connect.
 
 ## Known v1 limitations
 
-- Compiled-script export only special-cases router branches that are exactly one node deep
-  before reconverging — anything further downstream in an untaken branch is emitted as an
-  unconditional call and throws at runtime; the interpreter itself has no such limit (it
-  propagates a `never` port-slot arbitrarily deep). Fixing this means replacing the
-  compiler's flat statement-emission pass with a real dominator/dominance-frontier walk so an
-  entire conditionally-executed subtree — not just the direct branch target — gets guarded;
-  see `packages/compiler/src/compile-graph.ts`'s `emitSequential`.
 - Loop/Map bodies are a single node (which can itself be any node kind), not an arbitrary
-  subgraph. Both the interpreter and the compiler assume exactly one child node per
-  Loop/Map `parentId` and never index edges between body nodes; supporting a real subgraph
-  body means embedding a second, nested instance of the graph-execution engine inside
-  loop/map dispatch in both `packages/interpreter/src/run-graph.ts` and
-  `packages/compiler/src/compile-graph.ts`, kept in parity.
+  subgraph. Both the interpreter and the compiler store the body lookup as a single-value
+  `Map<parentId, FlowNode>` and never index edges between body nodes — nothing in the graph
+  schema itself blocks multiple nodes sharing a `parentId`; this is purely a data-structure
+  choice, symmetric across both runtimes. Supporting a real subgraph body is a three-layer
+  feature (schema/canvas representation of a multi-node body, interpreter, compiler), not a
+  compiler-only fix — see `packages/interpreter/src/run-graph.ts` and
+  `packages/compiler/src/compile-graph.ts`.
 
 ## Repository layout
 

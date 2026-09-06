@@ -25,6 +25,22 @@ interface RouterBranch {
   targetId: string;
 }
 
+/** One router-branch condition that must hold for a node's statement to run. A node's `Scope`
+ *  is the ordered list of `Guard`s from outermost to innermost — see `computeScopes`. */
+interface Guard {
+  routerId: string;
+  branchTargetId: string;
+  sourceHandle: string;
+}
+type Scope = readonly Guard[];
+
+interface EmitCtx {
+  nodesById: Map<string, FlowNode>;
+  incoming: Map<string, Map<string, IncomingEdge>>;
+  bodyByParent: Map<string, FlowNode>;
+  routerBranches: Map<string, RouterBranch[]>;
+}
+
 export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   const outerNodes = graph.nodes.filter((n) => !n.parentId);
   const nodesById = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -43,11 +59,9 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   const hasOutgoing = new Set(outerGraph.edges.map((e) => e.source));
   const terminalNodeIds = outerNodes.map((n) => n.id).filter((id) => !hasOutgoing.has(id));
 
-  const branchNodeIds = new Set<string>();
   const routerBranches = new Map<string, RouterBranch[]>();
   for (const edge of outerGraph.edges) {
     if (nodesById.get(edge.source)?.type === "router") {
-      branchNodeIds.add(edge.target);
       const list = routerBranches.get(edge.source) ?? [];
       list.push({ sourceHandle: edge.sourceHandle ?? "output", targetId: edge.target });
       routerBranches.set(edge.source, list);
@@ -55,6 +69,11 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   }
 
   const hasControlFlow = outerNodes.some((n) => n.type === "router" || n.type === "loop" || n.type === "map");
+
+  const levels = topoLevels(outerGraph);
+  const order = levels.flat();
+  const scopes = hasControlFlow ? computeScopes(order, incoming, routerBranches) : new Map<string, Scope>();
+  const isOptionalId = (id: string): boolean => (scopes.get(id)?.length ?? 0) > 0;
 
   const specEntries = graph.nodes
     .map((node) => {
@@ -64,13 +83,11 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
     .join("\n");
 
   const statements = hasControlFlow
-    ? emitSequential({ outerGraph, nodesById, incoming, bodyByParent, branchNodeIds, routerBranches })
-    : topoLevels(outerGraph)
-        .map((level) => emitLevel(level, nodesById, incoming, branchNodeIds))
-        .join("\n");
+    ? emitSequential(order, scopes, { nodesById, incoming, bodyByParent, routerBranches })
+    : levels.map((level) => emitLevel(level, nodesById, incoming)).join("\n");
 
   const finishBindings = terminalNodeIds
-    .map((id) => `${varName(id)}: ${accessorExpr(nodesById.get(id)!, varName(id), branchNodeIds.has(id))}`)
+    .map((id) => `${varName(id)}: ${accessorExpr(nodesById.get(id)!, varName(id), isOptionalId(id))}`)
     .join(", ");
 
   const usedProviderIds = [...new Set(graph.nodes.map((n) => n.data["providerId"] as string))].filter(
@@ -159,73 +176,151 @@ function emitLevel(
   level: string[],
   nodesById: Map<string, FlowNode>,
   incoming: Map<string, Map<string, IncomingEdge>>,
-  branchNodeIds: Set<string>,
 ): string {
   if (level.length === 1) {
     const nodeId = level[0]!;
-    return `  const ${varName(nodeId)} = ${callExpr(nodeId, nodesById, incoming, branchNodeIds)};`;
+    return `  const ${varName(nodeId)} = ${callExpr(nodeId, nodesById, incoming, () => false)};`;
   }
   const decls = level.map(varName).join(", ");
-  const calls = level.map((nodeId) => `    ${callExpr(nodeId, nodesById, incoming, branchNodeIds)},`).join("\n");
+  const calls = level.map((nodeId) => `    ${callExpr(nodeId, nodesById, incoming, () => false)},`).join("\n");
   return `  const [${decls}] = await Promise.all([\n${calls}\n  ]);`;
 }
 
-interface SequentialCtx {
-  outerGraph: FlowGraph;
-  nodesById: Map<string, FlowNode>;
-  incoming: Map<string, Map<string, IncomingEdge>>;
-  bodyByParent: Map<string, FlowNode>;
-  branchNodeIds: Set<string>;
-  routerBranches: Map<string, RouterBranch[]>;
+function guardEquals(a: Guard, b: Guard): boolean {
+  return a.routerId === b.routerId && a.branchTargetId === b.branchTargetId;
+}
+
+function scopeEquals(a: Scope, b: Scope): boolean {
+  return a.length === b.length && a.every((g, i) => guardEquals(g, b[i]!));
+}
+
+/** The longest leading run of `Guard`s two scopes agree on — the scope of their closest common
+ *  ancestor. Diverges to `[]` once two scopes disagree on any Guard, or once the shorter scope
+ *  runs out (a node fed by both a conditional and an unconditional source lands at whichever
+ *  ancestor scope is common to both — the conservative/safe placement in either case). */
+function commonPrefix(a: Scope, b: Scope): Scope {
+  const len = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < len && guardEquals(a[i]!, b[i]!)) i++;
+  return a.slice(0, i);
+}
+
+/**
+ * Computes each node's `Scope` — the router-branch conditions that must hold for it to run —
+ * via one forward pass over topological order. A node's scope is the closest-common-ancestor
+ * (`commonPrefix`) of all its inputs' scopes, plus one more `Guard` if the node is itself a
+ * direct router-branch target. This replaces the old one-hop `branchNodeIds` set: nesting
+ * composes automatically (a router nested inside another router's branch gets that branch's
+ * guard prepended to its own targets' scopes, with no separate "ancestor router" bookkeeping),
+ * and a reconvergence node (e.g. Merge, fed by two sibling branches) naturally lands back at
+ * the shared ancestor scope since `commonPrefix` diverges at the router that split them.
+ *
+ * Known, deliberately unhandled edge cases (see CLAUDE.md):
+ * - A node fed only by mutually-exclusive branches of two *different* routers with no Merge in
+ *   between lands at scope `[]` (unconditional) and reads both inputs optionally — correct as
+ *   far as it goes, but the compiler has no `required`-port metadata to detect that such a node
+ *   would actually run with `undefined` in a field it needs. Pre-existing gap, not new here.
+ * - If a single router wires two different routes to the literal same downstream node,
+ *   `branchGuard`'s last write wins, so that node's scope reflects only one of the two
+ *   branches. Very unusual graph shape (redundant, since the router already encodes the
+ *   choice); left unhandled.
+ */
+function computeScopes(
+  order: string[],
+  incoming: Map<string, Map<string, IncomingEdge>>,
+  routerBranches: Map<string, RouterBranch[]>,
+): Map<string, Scope> {
+  const branchGuard = new Map<string, Guard>();
+  for (const [routerId, branches] of routerBranches) {
+    for (const b of branches) {
+      branchGuard.set(b.targetId, { routerId, branchTargetId: b.targetId, sourceHandle: b.sourceHandle });
+    }
+  }
+
+  const scopes = new Map<string, Scope>();
+  for (const nodeId of order) {
+    const edges = [...(incoming.get(nodeId)?.values() ?? [])];
+    let scope: Scope = edges.length === 0 ? [] : edges.map((e) => scopes.get(e.source)!).reduce(commonPrefix);
+    const guard = branchGuard.get(nodeId);
+    if (guard) scope = [...scope, guard];
+    scopes.set(nodeId, scope);
+  }
+  return scopes;
 }
 
 /**
  * Sequential (non-`Promise.all`) statement emission, used whenever the graph contains a
- * Router/Loop/Map. v1 scope: a router's branches are exactly one node deep before converging —
- * deeper chains inside a branch aren't specially guarded (see CLAUDE.md).
+ * Router/Loop/Map. Every conditionally-scoped node (`scope.length > 0`) is `let`-hoisted up
+ * front in one flat pass, decoupled from which router "owns" it — a per-router hoist (walking
+ * only that router's own transitive descendants) would double-declare a node nested inside two
+ * routers, once from each ancestor's hoist pass. `emitScope` then recursively emits each node
+ * exactly once, inside nested `if`/`else if` blocks matching its computed `Scope`, to arbitrary
+ * depth — this is what lets a chain of any length inside a branch, or a router nested inside
+ * another router's branch, compile correctly (previously: only nodes exactly one hop from a
+ * router were guarded at all; see CLAUDE.md).
  */
-function emitSequential(ctx: SequentialCtx): string {
-  const { nodesById, incoming, bodyByParent, branchNodeIds, routerBranches } = ctx;
-  const order = topoLevels(ctx.outerGraph).flat();
+function emitSequential(order: string[], scopes: Map<string, Scope>, ctx: EmitCtx): string {
+  const { nodesById } = ctx;
+  const isOptional = (sourceId: string): boolean => (scopes.get(sourceId)?.length ?? 0) > 0;
+
+  const lines: string[] = [];
+  for (const nodeId of order) {
+    if ((scopes.get(nodeId)?.length ?? 0) === 0) continue;
+    const method = emitTable[nodesById.get(nodeId)!.type].runtimeMethod;
+    lines.push(`  let ${varName(nodeId)}: Awaited<ReturnType<typeof rt.${method}>> | undefined;`);
+  }
+  lines.push(...emitScope([], order, scopes, ctx, isOptional, "  "));
+  return lines.join("\n");
+}
+
+function emitScope(
+  scopePrefix: Scope,
+  order: string[],
+  scopes: Map<string, Scope>,
+  ctx: EmitCtx,
+  isOptional: (sourceId: string) => boolean,
+  indent: string,
+): string[] {
+  const { nodesById, incoming, bodyByParent, routerBranches } = ctx;
+  const isHoisted = scopePrefix.length > 0;
   const lines: string[] = [];
 
   for (const nodeId of order) {
-    if (branchNodeIds.has(nodeId)) continue; // emitted inline by its router, below
+    if (!scopeEquals(scopes.get(nodeId) ?? [], scopePrefix)) continue; // handled by an ancestor/descendant call
     const node = nodesById.get(nodeId)!;
 
     if (node.type === "router") {
+      lines.push(`${indent}${isHoisted ? "" : "const "}${varName(nodeId)} = ${callExpr(nodeId, nodesById, incoming, isOptional)};`);
       const branches = routerBranches.get(nodeId) ?? [];
-      lines.push(`  const ${varName(nodeId)} = ${callExpr(nodeId, nodesById, incoming, branchNodeIds)};`);
-      for (const b of branches) {
-        const method = emitTable[nodesById.get(b.targetId)!.type].runtimeMethod;
-        lines.push(`  let ${varName(b.targetId)}: Awaited<ReturnType<typeof rt.${method}>> | undefined;`);
-      }
       branches.forEach((b, i) => {
         const keyword = i === 0 ? "if" : "} else if";
-        lines.push(`  ${keyword} (${varName(nodeId)}.route === ${JSON.stringify(b.sourceHandle)}) {`);
-        lines.push(`    ${varName(b.targetId)} = ${callExpr(b.targetId, nodesById, incoming, branchNodeIds)};`);
+        lines.push(`${indent}${keyword} (${varName(nodeId)}.route === ${JSON.stringify(b.sourceHandle)}) {`);
+        const branchScope: Scope = [...scopePrefix, { routerId: nodeId, branchTargetId: b.targetId, sourceHandle: b.sourceHandle }];
+        lines.push(...emitScope(branchScope, order, scopes, ctx, isOptional, indent + "  "));
       });
-      if (branches.length > 0) lines.push("  }");
+      if (branches.length > 0) lines.push(`${indent}}`);
       continue;
     }
 
     if (node.type === "loop" || node.type === "map") {
       const bodyNode = bodyByParent.get(nodeId);
       if (!bodyNode) throw new Error(`"${node.type}" node "${nodeId}" has no body node (a child with parentId set)`);
-      lines.push(emitLoopOrMap(node, bodyNode, incoming, branchNodeIds));
+      lines.push(emitLoopOrMap(node, bodyNode, incoming, isOptional, indent, isHoisted));
       continue;
     }
 
-    lines.push(`  const ${varName(nodeId)} = ${callExpr(nodeId, nodesById, incoming, branchNodeIds)};`);
+    lines.push(`${indent}${isHoisted ? "" : "const "}${varName(nodeId)} = ${callExpr(nodeId, nodesById, incoming, isOptional)};`);
   }
-  return lines.join("\n");
+  return lines;
 }
 
 function emitLoopOrMap(
   node: FlowNode,
   bodyNode: FlowNode,
   incoming: Map<string, Map<string, IncomingEdge>>,
-  branchNodeIds: Set<string>,
+  isOptional: (sourceId: string) => boolean,
+  indent: string,
+  isHoisted: boolean,
 ): string {
   const bodyEmitter = emitTable[bodyNode.type];
   const bodyMethod = bodyEmitter.runtimeMethod;
@@ -242,7 +337,7 @@ function emitLoopOrMap(
       const edge = incoming.get(node.id)?.get(port);
       if (!edge) throw new Error(`node "${node.id}" has no incoming edge bound to input "${port}"`);
       const sourceNode = { id: edge.source, type: "prompt" } as FlowNode; // kind only matters for accessor; init/items templates read plain values
-      return `${port}: ${accessorExpr(sourceNode, varName(edge.source), branchNodeIds.has(edge.source), edge.sourceHandle)}`;
+      return `${port}: ${accessorExpr(sourceNode, varName(edge.source), isOptional(edge.source), edge.sourceHandle)}`;
     })
     .join(", ");
 
@@ -251,17 +346,17 @@ function emitLoopOrMap(
   // Scoped id matches the interpreter's `activationKey(bodyNodeId, [{loop: nodeId, index}])` format,
   // so per-iteration events/responses line up identically between interpreted and compiled runs.
   const scopedIdExpr = "`" + bodyNode.id + "@" + node.id + ":${i}`";
-  return `  const ${varName(node.id)} = await rt.${combinator}(N.${varName(node.id)}, { ${ownBindings} }, async (${bodyParam}) => {
-    const bodyResult = await rt.${bodyMethod}({ ...N.${varName(bodyNode.id)}, id: ${scopedIdExpr}, contextNodeId: ${JSON.stringify(bodyNode.id)} }, { ${bodyBindings} });
-    return bodyResult.output;
-  });`;
+  return `${indent}${isHoisted ? "" : "const "}${varName(node.id)} = await rt.${combinator}(N.${varName(node.id)}, { ${ownBindings} }, async (${bodyParam}) => {
+${indent}  const bodyResult = await rt.${bodyMethod}({ ...N.${varName(bodyNode.id)}, id: ${scopedIdExpr}, contextNodeId: ${JSON.stringify(bodyNode.id)} }, { ${bodyBindings} });
+${indent}  return bodyResult.output;
+${indent}});`;
 }
 
 function callExpr(
   nodeId: string,
   nodesById: Map<string, FlowNode>,
   incoming: Map<string, Map<string, IncomingEdge>>,
-  branchNodeIds: Set<string>,
+  isOptional: (sourceId: string) => boolean,
 ): string {
   const node = nodesById.get(nodeId);
   if (!node) throw new Error(`unknown node "${nodeId}"`);
@@ -272,7 +367,7 @@ function callExpr(
       const edge = incoming.get(nodeId)?.get(port);
       if (!edge) throw new Error(`node "${nodeId}" has no incoming edge bound to input "${port}"`);
       const sourceNode = nodesById.get(edge.source)!;
-      const optional = branchNodeIds.has(edge.source);
+      const optional = isOptional(edge.source);
       return `${port}: ${accessorExpr(sourceNode, varName(edge.source), optional, edge.sourceHandle)}`;
     })
     .join(", ");
