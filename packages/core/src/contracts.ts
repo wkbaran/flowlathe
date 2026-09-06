@@ -1,4 +1,4 @@
-import type { SuspendReason } from "./activation.js";
+import type { NeverReason, SuspendReason } from "./activation.js";
 import type { CompactionMethod, ContextMessage, ContextStore, LlmConfigStore } from "./context.js";
 import type { MergeRule, StateStore } from "./state.js";
 
@@ -98,6 +98,7 @@ export type RunEvent =
       latencyMs: number;
     }
   | { kind: "node_failed"; nodeId: string; error: string }
+  | { kind: "node_skipped"; nodeId: string; reason: NeverReason }
   | { kind: "node_suspended"; nodeId: string; activationKey: string; reason: SuspendReason }
   | {
       kind: "state_write";

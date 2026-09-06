@@ -74,7 +74,7 @@ describe("runGraph — linear chains", () => {
   });
 });
 
-function identityRun(): ReturnType<typeof createRun> {
+function identityRun(events: RunEvent[] = []): ReturnType<typeof createRun> {
   const scheduler = new SimpleScheduler({
     mock: { adapter: { kind: "identity", call: async (req: { prompt: string }) => ({ content: req.prompt, finishReason: "stop" }) }, maxParallel: 8 },
   });
@@ -83,7 +83,7 @@ function identityRun(): ReturnType<typeof createRun> {
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
-      emit: () => undefined,
+      emit: (e) => events.push(e),
       clock: { now: () => 0 },
       state,
       llmConfig: createLlmConfigStore(),
@@ -148,9 +148,11 @@ describe("runGraph — router + merge (fan-out/join)", () => {
       ],
       state: [],
     };
-    const { outputs } = await runGraph({ graph, run: identityRun() });
+    const events: RunEvent[] = [];
+    const { outputs } = await runGraph({ graph, run: identityRun(events) });
     // "neither" doesn't match case "a" -> defaultRoute "b" taken -> onlyIfA's port stays never -> skipped
     expect(outputs["onlyIfA"]).toBeUndefined();
+    expect(events).toContainEqual({ kind: "node_skipped", nodeId: "onlyIfA", reason: "upstream_skipped" });
   });
 });
 

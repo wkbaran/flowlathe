@@ -7,6 +7,7 @@ import {
   valueSlot,
   type FlowGraph,
   type FlowNode,
+  type NeverReason,
   type NodeKind,
   type PortSlot,
 } from "@flowlathe/core";
@@ -199,12 +200,13 @@ export class GraphEngine {
     const ports = descriptor.inputPorts(spec);
     const slots = Object.fromEntries(ports.map((p) => [p.name, this.portSlot(node.id, p.name)]));
 
-    if (ports.some((p) => p.required && isNever(slots[p.name]!))) {
-      this.skipNode(node, spec);
+    const requiredNever = ports.find((p) => p.required && isNever(slots[p.name]!));
+    if (requiredNever) {
+      this.skipNode(node, spec, (slots[requiredNever.name] as Extract<PortSlot, { kind: "never" }>).reason);
       return;
     }
     if (ports.length > 0 && ports.every((p) => isNever(slots[p.name]!))) {
-      this.skipNode(node, spec);
+      this.skipNode(node, spec, (slots[ports[0]!.name] as Extract<PortSlot, { kind: "never" }>).reason);
       return;
     }
 
@@ -222,11 +224,12 @@ export class GraphEngine {
     this.outputs.set(node.id, outSlots);
   }
 
-  private skipNode(node: FlowNode, spec: unknown): void {
+  private skipNode(node: FlowNode, spec: unknown, reason: NeverReason): void {
     const outPorts = registry[node.type].outputPorts(spec);
     const outSlots: Record<string, PortSlot> = {};
     for (const port of outPorts) outSlots[port] = neverSlot("upstream_skipped");
     this.outputs.set(node.id, outSlots);
+    this.run.emit({ kind: "node_skipped", nodeId: node.id, reason });
   }
 
   private async dispatchLoopOrMap(node: FlowNode): Promise<void> {

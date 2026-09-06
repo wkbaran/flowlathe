@@ -8,9 +8,11 @@ import {
   getBlob,
   getBranch,
   getSnapshot,
+  getStateSnapshotAsOf,
   listSnapshotsForBranch,
   listStateWritesForBranch,
   putBlob,
+  recordStateWrite,
   startExecution,
 } from "@flowlathe/persistence";
 import type { ExecutionHub } from "./execution-hub.js";
@@ -158,5 +160,18 @@ export function stepBack(db: Db, snapshotId: string, label?: string): StepBackRe
     parentSnapshotId: original.id,
     payload: original.payload,
   });
+
+  // Seed the fork's own state rows from the parent branch as of the fork point, mirroring the
+  // snapshot-payload copy above — see CLAUDE.md's note on this being the known v1 gap.
+  for (const write of getStateSnapshotAsOf(db, originalBranch.id, original.stepIndex)) {
+    recordStateWrite(db, {
+      branchId: newBranch.id,
+      entry: write.entry,
+      value: write.value,
+      merge: write.merge,
+      seq: write.seq,
+    });
+  }
+
   return { branchId: newBranch.id, snapshotId: newSnapshot.id };
 }

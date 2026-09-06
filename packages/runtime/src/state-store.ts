@@ -3,9 +3,9 @@ import { applyMerge, type MergeRule, type RunEvent, type StateDecl, type StateSt
 export interface StateStoreInit {
   decls: StateDecl[];
   /** Past writes to fold in before this store is used — how a step-mode host resumes a branch's
-   *  state across `stepOnce` calls (each of which builds a fresh host). **v1 scope**: only this
-   *  branch's own writes are replayed, not its parent branches' — a step-back fork's state store
-   *  starts empty rather than inheriting pre-fork writes (see CLAUDE.md). */
+   *  state across `stepOnce` calls (each of which builds a fresh host). A step-back fork's own
+   *  writes already include its pre-fork inheritance, seeded once at fork time by `stepBack`
+   *  (see `getStateSnapshotAsOf`) — this replay itself only ever looks at one branch's rows. */
   replay?: { entry: string; value: unknown; seq: number }[] | undefined;
 }
 

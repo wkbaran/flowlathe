@@ -97,15 +97,19 @@ pnpm dev
 
 ## Known v1 limitations
 
-- A router branch that isn't taken shows its nodes as `idle` rather than a distinct
-  `skipped` state — there's no visual difference yet between "never reached" and "will run
-  later."
-- State does not currently fork across step-back branches; a forked branch starts with empty
-  state rather than inheriting pre-fork writes.
 - Compiled-script export only special-cases router branches that are exactly one node deep
-  before reconverging; the interpreter itself has no such limit.
+  before reconverging — anything further downstream in an untaken branch is emitted as an
+  unconditional call and throws at runtime; the interpreter itself has no such limit (it
+  propagates a `never` port-slot arbitrarily deep). Fixing this means replacing the
+  compiler's flat statement-emission pass with a real dominator/dominance-frontier walk so an
+  entire conditionally-executed subtree — not just the direct branch target — gets guarded;
+  see `packages/compiler/src/compile-graph.ts`'s `emitSequential`.
 - Loop/Map bodies are a single node (which can itself be any node kind), not an arbitrary
-  subgraph.
+  subgraph. Both the interpreter and the compiler assume exactly one child node per
+  Loop/Map `parentId` and never index edges between body nodes; supporting a real subgraph
+  body means embedding a second, nested instance of the graph-execution engine inside
+  loop/map dispatch in both `packages/interpreter/src/run-graph.ts` and
+  `packages/compiler/src/compile-graph.ts`, kept in parity.
 
 ## Repository layout
 

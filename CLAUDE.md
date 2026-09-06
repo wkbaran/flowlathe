@@ -129,13 +129,18 @@ rediscover them the hard way.
     non-`empty`, and a port with zero edges stays `empty` forever. "Optional" only ever meant
     "allowed to resolve to `never`," never "allowed to have no edge." Merge's `in1`/`in2` already
     relied on this; Gate's single `input` port does too.
-  - **State does not fork across branches.** `state_writes`/`state_reads` carry `branch_id`, but
-    `stepBack` (Slice 4) never copies a branch's state rows onto the new fork — a step-mode
-    `StateStore` is rebuilt fresh on every `stepOnce` call by replaying only `listStateWritesForBranch`
-    for the *current* branch (`packages/runtime/src/state-store.ts`'s `replay` option), so a forked
-    branch's state starts empty rather than inheriting pre-fork writes. Port-value forking has no
-    such gap (Slice 4 got that right); state does, for now — walking `branches.parent_branch_id` to
-    accumulate ancestor writes is the fix, not yet built.
+  - **State now forks across branches (resolved; was a known v1 gap).** `stepBack`
+    (`packages/server/src/stepper.ts`) seeds the new branch's own `state_writes` rows at fork
+    time — via `getStateSnapshotAsOf(db, originalBranchId, forkStepIndex)`
+    (`packages/persistence/src/state.ts`), which resolves each entry's last-write-wins value
+    *as of* the fork's `stepIndex` (bounded by `steps.stepIndex`, joined via `state_writes.stepId`)
+    — mirroring the existing snapshot-`payload` copy, not a live ancestor-chain walk at read
+    time (a naive `parent_branch_id` walk would leak the parent's *post*-fork writes into the
+    child, since the parent keeps stepping forward independently after the fork). A write with
+    no owning step (no activation key) can't be bounded by step order, so it's always carried
+    forward. `listStateWritesForBranch`/`state-store.ts`'s `replay` option are otherwise
+    unchanged — they still only ever look at one branch's own rows; the fork's rows now simply
+    already include its inheritance.
   - **"Dashed lineage edges" render an observed, not a static, dependency.** State reads/writes
     have no graph edge between writer and reader node, so nothing can be inferred from the graph
     alone — the canvas fetches `/api/executions/:id/state-lineage` (joins `state_writes`/`state_reads`
@@ -296,3 +301,15 @@ rediscover them the hard way.
       exports (the script is a faithful record of the graph), it just refuses to run. Covered by
       `packages/testing/src/plugin-gate.test.ts`, which actually spawns the compiled script rather
       than only asserting on the generated source string.
+- **A router branch's untaken side now surfaces as a real `node_skipped` `RunEvent`/UI status
+  (resolved; was a known v1 gap — see README).** The graph-analysis part already existed and was
+  correct: `GraphEngine.dispatchNode`'s `never`-port detection (`packages/interpreter/src/run-graph.ts`)
+  already called a private `skipNode()` that set every output to `neverSlot("upstream_skipped")`;
+  it just never told anyone. The web UI's `NodeStatus` already had a `"skipped"` case defined
+  (`packages/web/src/nodes/NodeCard.tsx`) and `steps.status`'s TS union already included
+  `"skipped"` (`packages/persistence/src/schema.ts`) — both unused until now. Fixing this required
+  adding `emit(event: RunEvent): void` to the `Run` interface itself
+  (`packages/runtime/src/run.ts`, delegating to `host.emit`) — `GraphEngine` only holds a `Run`,
+  not the raw `RuntimeHost`, and every other node kind's `ctx.emit(...)` calls happen inside
+  per-node `run.ts` files that *do* receive the raw host. Any code that hand-builds a `Run` object
+  (rather than going through `createRun`) now needs an `emit` method too.

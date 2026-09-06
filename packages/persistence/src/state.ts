@@ -88,9 +88,10 @@ export interface StateWriteRow {
 
 /**
  * All writes recorded so far on `branchId`, in seq order — the replay log a step-mode
- * StateStore resumes from. **v1 scope**: this reads only `branchId`'s own rows, not its parent
- * branches — a step-back fork's state store starts empty rather than inheriting pre-fork writes
- * (see CLAUDE.md). Port-value forking (Slice 4) has no such gap; state does, for now.
+ * StateStore resumes from. Reads only `branchId`'s own rows; a step-back fork's rows are
+ * seeded at fork time (via `getStateSnapshotAsOf`, called from `stepBack`) rather than being
+ * read here transitively from parent branches, mirroring how port-value forking already
+ * copies a snapshot's payload forward.
  */
 export function listStateWritesForBranch(db: Db, branchId: string): StateWriteRow[] {
   const rows = db
@@ -110,6 +111,52 @@ export function getStateSnapshot(db: Db, branchId: string): Record<string, unkno
   const values: Record<string, unknown> = {};
   for (const write of listStateWritesForBranch(db, branchId)) values[write.entry] = write.value;
   return values;
+}
+
+export interface StateSnapshotRow extends StateWriteRow {
+  merge: string;
+}
+
+/**
+ * The last write per entry on `branchId`, as of `maxStepIndex` — bounded to writes whose owning
+ * step is at or before that point. Used by `stepBack` to seed a forked branch's own state rows
+ * at fork time, mirroring how a fork already copies the snapshot `payload` forward (see
+ * CLAUDE.md). Preserves each entry's original `seq`/`merge` (not just its value) so the seeded
+ * rows can be re-recorded verbatim via `recordStateWrite` and `StateStore`'s replay can keep
+ * numbering `seq` forward without collision. A write with no recorded step (no activation key)
+ * can't be bounded by step order, so it's always included.
+ */
+export function getStateSnapshotAsOf(db: Db, branchId: string, maxStepIndex: number): StateSnapshotRow[] {
+  const stepIndexById = new Map(
+    db
+      .select({ id: steps.id, stepIndex: steps.stepIndex })
+      .from(steps)
+      .where(eq(steps.branchId, branchId))
+      .all()
+      .map((s) => [s.id, s.stepIndex]),
+  );
+  const rows = db
+    .select({
+      entry: stateWrites.entry,
+      valueSha: stateWrites.valueSha,
+      seq: stateWrites.seq,
+      stepId: stateWrites.stepId,
+      merge: stateWrites.mergeApplied,
+    })
+    .from(stateWrites)
+    .where(eq(stateWrites.branchId, branchId))
+    .orderBy(asc(stateWrites.seq))
+    .all();
+
+  const latest = new Map<string, StateSnapshotRow>();
+  for (const row of rows) {
+    const stepIndex = row.stepId ? stepIndexById.get(row.stepId) : undefined;
+    if (row.stepId && stepIndex !== undefined && stepIndex > maxStepIndex) continue;
+    const bytes = getBlob(db, row.valueSha);
+    const value = bytes ? JSON.parse(bytes.toString("utf-8")) : undefined;
+    latest.set(row.entry, { entry: row.entry, value, seq: row.seq, merge: row.merge });
+  }
+  return [...latest.values()];
 }
 
 export interface StateLineageEdge {

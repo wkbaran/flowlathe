@@ -66,7 +66,7 @@ export function beginStep(
   return stepId;
 }
 
-export function finishStep(db: Db, stepId: string, status: "done" | "failed"): void {
+export function finishStep(db: Db, stepId: string, status: "done" | "failed" | "skipped"): void {
   db.update(steps)
     .set({ status, endedAt: sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))` })
     .where(eq(steps.id, stepId))

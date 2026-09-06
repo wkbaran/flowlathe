@@ -84,6 +84,10 @@ export function buildHostAndRun(opts: {
         finishStep(db, stepId, "failed");
         recordFailedResponse(db, { executionId, branchId, stepId, nodeId: event.nodeId, error: event.error });
       }
+    } else if (event.kind === "node_skipped") {
+      const stepId = beginStep(db, { branchId, nodeId: event.nodeId });
+      stepIdByNodeId.set(event.nodeId, stepId);
+      finishStep(db, stepId, "skipped");
     } else if (event.kind === "node_suspended") {
       setExecutionStatus(db, executionId, "awaiting_input");
     } else if (event.kind === "state_write") {

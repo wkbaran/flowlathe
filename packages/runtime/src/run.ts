@@ -3,6 +3,7 @@ import {
   type ContextStore,
   type LlmConfigStore,
   type PromptResult,
+  type RunEvent,
   type RuntimeHost,
   type StateStore,
   type ToolRegistry,
@@ -22,6 +23,7 @@ export interface Run {
   readonly llmConfig: LlmConfigStore;
   readonly context: ContextStore;
   readonly tools: ToolRegistry;
+  emit(event: RunEvent): void;
   prompt(spec: PromptSpec, inputs: Record<string, string>): Promise<PromptResult>;
   route(spec: RouterSpec, inputs: Record<string, string>): Promise<RouterResult>;
   merge(spec: MergeSpec, inputs: Record<string, string | undefined>): Promise<MergeResult>;
@@ -49,6 +51,7 @@ export function createRun(opts: CreateRunOptions): Run {
     llmConfig: host.llmConfig,
     context: host.context,
     tools: host.tools,
+    emit: (event) => host.emit(event),
     prompt: (spec, inputs) => runPrompt(host, spec, inputs),
     route: (spec, inputs) => runRouter(host, spec, inputs),
     merge: (spec, inputs) => runMerge(host, spec, inputs),

@@ -7,6 +7,7 @@ import { runMigrations } from "./migrate.js";
 import {
   getStateDecls,
   getStateSnapshot,
+  getStateSnapshotAsOf,
   listStateLineage,
   listStateWritesForBranch,
   recordStateRead,
@@ -61,6 +62,23 @@ describe("state writes/reads", () => {
     recordStateWrite(opened.db, { branchId, entry: "topic", value: "cats", merge: "replace", seq: 3 });
 
     expect(getStateSnapshot(opened.db, branchId)).toEqual({ count: 3, topic: "cats" });
+  });
+
+  it("getStateSnapshotAsOf caps the last-write-wins value at a given step index", () => {
+    const flow = createFlow(opened.db, "My Flow", emptyFlowGraph());
+    const branchId = startExecution(opened.db, flow.flowVersionId).branchId;
+
+    const step0 = beginStep(opened.db, { branchId, nodeId: "a" });
+    recordStateWrite(opened.db, { branchId, stepId: step0, entry: "count", value: 1, merge: "replace", seq: 1 });
+    const step1 = beginStep(opened.db, { branchId, nodeId: "b" });
+    recordStateWrite(opened.db, { branchId, stepId: step1, entry: "count", value: 2, merge: "replace", seq: 2 });
+
+    expect(getStateSnapshotAsOf(opened.db, branchId, 0)).toEqual([
+      { entry: "count", value: 1, seq: 1, merge: "replace" },
+    ]);
+    expect(getStateSnapshotAsOf(opened.db, branchId, 1)).toEqual([
+      { entry: "count", value: 2, seq: 2, merge: "replace" },
+    ]);
   });
 
   it("listStateLineage connects the node that wrote an entry to the node that read it", () => {

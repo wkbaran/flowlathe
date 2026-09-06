@@ -1,9 +1,11 @@
 export type ScopePath = ReadonlyArray<{ loop: string; index: number }>;
 
+export type NeverReason = "branch_not_taken" | "upstream_skipped" | "upstream_failed";
+
 export type PortSlot =
   | { kind: "empty" }
   | { kind: "value"; value: string }
-  | { kind: "never"; reason: "branch_not_taken" | "upstream_skipped" | "upstream_failed" };
+  | { kind: "never"; reason: NeverReason };
 
 export function activationKey(nodeId: string, scope: ScopePath): string {
   if (scope.length === 0) return nodeId;
