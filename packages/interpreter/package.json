@@ -13,7 +13,13 @@
   },
   "dependencies": {
     "@flowlathe/core": "workspace:*",
+    "@flowlathe/node-loop": "workspace:*",
+    "@flowlathe/node-map": "workspace:*",
+    "@flowlathe/node-merge": "workspace:*",
+    "@flowlathe/node-pause": "workspace:*",
     "@flowlathe/node-prompt": "workspace:*",
+    "@flowlathe/node-router": "workspace:*",
+    "@flowlathe/node-user-input": "workspace:*",
     "@flowlathe/runtime": "workspace:*",
     "zod": "4.5.4"
   },

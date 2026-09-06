@@ -7,8 +7,8 @@ test("draws a two-node prompt chain, runs it, and shows logs + export", async ({
   await expect(page).toHaveURL(/\/flows\/.+/);
   const flowId = page.url().split("/flows/")[1]!;
 
-  await page.getByRole("button", { name: "Add Prompt Node" }).click();
-  await page.getByRole("button", { name: "Add Prompt Node" }).click();
+  await page.getByRole("button", { name: "Add Node" }).click();
+  await page.getByRole("button", { name: "Add Node" }).click();
 
   const nodeA = page.getByTestId("node-node-1");
   const nodeB = page.getByTestId("node-node-2");

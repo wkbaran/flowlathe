@@ -70,6 +70,14 @@ export function getExecution(executionId: string): Promise<ExecutionStatus> {
   return fetch(`/api/executions/${executionId}`).then((res) => json(res));
 }
 
+export function resumeExecution(executionId: string, activationKey: string, value: string): Promise<void> {
+  return fetch(`/api/executions/${executionId}/resume`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ activationKey, value }),
+  }).then(() => undefined);
+}
+
 export type ProviderKind = "mock" | "ollama" | "openai-compat";
 
 export interface ProviderRecord {

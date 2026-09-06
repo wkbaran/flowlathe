@@ -8,10 +8,11 @@ import {
   finishStep,
   recordFailedResponse,
   recordResponse,
+  setExecutionStatus,
   SqliteBlobStore,
   startExecution,
 } from "@flowlathe/persistence";
-import { createRun } from "@flowlathe/runtime";
+import { createRun, createSuspendRegistry } from "@flowlathe/runtime";
 import type { ExecutionHub } from "./execution-hub.js";
 
 export interface RunFlowOptions {
@@ -32,6 +33,8 @@ export function runFlow(opts: RunFlowOptions): RunFlowHandle {
   const { db, hub, scheduler, flowVersionId, graph } = opts;
   const { executionId, branchId } = startExecution(db, flowVersionId);
   const stepIdByNodeId = new Map<string, string>();
+  const suspendRegistry = createSuspendRegistry();
+  hub.registerResolver(executionId, suspendRegistry.resolveSuspended);
 
   const emit = (event: RunEvent): void => {
     const seq = appendRunEvent(db, { executionId, branchId, kind: event.kind, payload: event });
@@ -43,6 +46,7 @@ export function runFlow(opts: RunFlowOptions): RunFlowHandle {
       scheduler,
       blobs: new SqliteBlobStore(db),
       clock: { now: () => Date.now() },
+      ...suspendRegistry,
       emit: (event) => {
         emit(event);
 
@@ -65,12 +69,15 @@ export function runFlow(opts: RunFlowOptions): RunFlowHandle {
               latencyMs: event.latencyMs,
             });
           }
+          setExecutionStatus(db, executionId, "running");
         } else if (event.kind === "node_failed") {
           const stepId = stepIdByNodeId.get(event.nodeId);
           if (stepId) {
             finishStep(db, stepId, "failed");
             recordFailedResponse(db, { executionId, branchId, stepId, nodeId: event.nodeId, error: event.error });
           }
+        } else if (event.kind === "node_suspended") {
+          setExecutionStatus(db, executionId, "awaiting_input");
         }
       },
     },
@@ -88,7 +95,8 @@ export function runFlow(opts: RunFlowOptions): RunFlowHandle {
       const message = (err as Error).message;
       emit({ kind: "run_failed", error: message });
       finishExecution(db, executionId, "failed", { message });
-    });
+    })
+    .finally(() => hub.unregisterResolver(executionId));
 
   return { executionId, branchId };
 }

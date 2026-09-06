@@ -13,7 +13,13 @@
   },
   "dependencies": {
     "@flowlathe/core": "workspace:*",
-    "@flowlathe/node-prompt": "workspace:*"
+    "@flowlathe/node-loop": "workspace:*",
+    "@flowlathe/node-map": "workspace:*",
+    "@flowlathe/node-merge": "workspace:*",
+    "@flowlathe/node-pause": "workspace:*",
+    "@flowlathe/node-prompt": "workspace:*",
+    "@flowlathe/node-router": "workspace:*",
+    "@flowlathe/node-user-input": "workspace:*"
   },
   "devDependencies": {
     "typescript": "5.9.3",

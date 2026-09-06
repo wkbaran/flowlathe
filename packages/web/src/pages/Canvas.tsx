@@ -1,4 +1,4 @@
-import type { FlowEdge, FlowNode, RunEvent } from "@flowlathe/core";
+import type { FlowEdge, FlowNode, NodeKind, RunEvent } from "@flowlathe/core";
 import {
   AppBar,
   Box,
@@ -11,6 +11,7 @@ import {
   ListItem,
   ListItemText,
   MenuItem,
+  Paper,
   Select,
   TextField,
   Toolbar,
@@ -36,18 +37,48 @@ import {
   getFlow,
   listModels,
   listProviders,
+  resumeExecution,
   runFlow,
   saveFlowGraph,
   type ModelRecord,
   type ProviderRecord,
 } from "../api.js";
-import { nodeTypes, type NodeStatus } from "../nodes/PromptNodeView.js";
+import type { NodeStatus } from "../nodes/NodeCard.js";
+import { nodeTypes } from "../nodes/node-types.js";
 
 let nextNodeSeq = 1;
 
 interface LogLine {
   seq: number;
   text: string;
+}
+
+interface SuspendedActivation {
+  activationKey: string;
+  nodeId: string;
+  prompt?: string | undefined;
+  message?: string | undefined;
+}
+
+const NODE_KIND_OPTIONS: NodeKind[] = ["prompt", "router", "merge", "pause", "userInput", "loop", "map"];
+
+function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
+  switch (type) {
+    case "prompt":
+      return { label: id, template: "", providerId: "mock", modelId: "mock" };
+    case "router":
+      return { label: id, routes: ["a", "b"], cases: [{ value: "a", route: "a" }], defaultRoute: "b" };
+    case "merge":
+      return { label: id };
+    case "pause":
+      return { label: id, message: "" };
+    case "userInput":
+      return { label: id, prompt: "Please provide input" };
+    case "loop":
+      return { label: id, initTemplate: "0", accPortName: "acc", stopValue: "done", maxIterations: 5 };
+    case "map":
+      return { label: id, itemsTemplate: '["a","b","c"]', itemPortName: "item", maxConcurrency: 3, maxItems: 10 };
+  }
 }
 
 export function Canvas() {
@@ -64,6 +95,10 @@ export function Canvas() {
   const [exportedScript, setExportedScript] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderRecord[]>([]);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelRecord[]>>({});
+  const [newNodeKind, setNewNodeKind] = useState<NodeKind>("prompt");
+  const [executionId, setExecutionId] = useState<string | null>(null);
+  const [suspended, setSuspended] = useState<SuspendedActivation[]>([]);
+  const [resumeDraft, setResumeDraft] = useState<Record<string, string>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -100,9 +135,9 @@ export function Canvas() {
       ...ns,
       {
         id,
-        type: "prompt",
+        type: newNodeKind,
         position: { x: 80 + ns.length * 60, y: 80 + ns.length * 40 },
-        data: { label: id, template: "", providerId: "mock", modelId: "mock" },
+        data: defaultDataFor(newNodeKind, id),
       } as Node,
     ]);
   }
@@ -110,6 +145,13 @@ export function Canvas() {
   function updateSelectedNodeData(patch: Record<string, unknown>) {
     if (!selectedNodeId) return;
     setNodes((ns) => ns.map((n) => (n.id === selectedNodeId ? { ...n, data: { ...n.data, ...patch } } : n)));
+  }
+
+  function updateSelectedNodeParent(parentId: string) {
+    if (!selectedNodeId) return;
+    setNodes((ns) =>
+      ns.map((n) => (n.id === selectedNodeId ? { ...n, parentId: parentId || undefined } : n)) as Node[],
+    );
   }
 
   async function handleSave() {
@@ -130,11 +172,13 @@ export function Canvas() {
     if (!flowId) return;
     setLog([]);
     setNodeStatus({});
+    setSuspended([]);
     try {
       await handleSave();
-      const { executionId } = await runFlow(flowId);
+      const { executionId: newExecutionId } = await runFlow(flowId);
+      setExecutionId(newExecutionId);
       eventSourceRef.current?.close();
-      const source = new EventSource(`/api/executions/${executionId}/events`);
+      const source = new EventSource(`/api/executions/${newExecutionId}/events`);
       eventSourceRef.current = source;
 
       const onEvent = (kind: RunEvent["kind"]) => (raw: MessageEvent<string>) => {
@@ -145,19 +189,45 @@ export function Canvas() {
           setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "running" }));
         } else if (kind === "node_finished") {
           setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "done" }));
+          setSuspended((prev) => prev.filter((s) => s.nodeId !== (event as { nodeId: string }).nodeId));
         } else if (kind === "node_failed") {
           setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "failed" }));
+        } else if (kind === "node_suspended") {
+          const e = event as Extract<RunEvent, { kind: "node_suspended" }>;
+          setNodeStatus((prev) => ({ ...prev, [e.nodeId]: "suspended" }));
+          setSuspended((prev) => [
+            ...prev,
+            {
+              activationKey: e.activationKey,
+              nodeId: e.nodeId,
+              prompt: e.reason.type === "user_input" ? e.reason.prompt : undefined,
+              message: e.reason.type === "pause" ? e.reason.message : undefined,
+            },
+          ]);
         } else if (kind === "run_finished" || kind === "run_failed") {
           source.close();
         }
       };
 
-      for (const kind of ["node_started", "token", "node_finished", "node_failed", "run_finished", "run_failed"] as const) {
+      for (const kind of [
+        "node_started",
+        "token",
+        "node_finished",
+        "node_failed",
+        "node_suspended",
+        "run_finished",
+        "run_failed",
+      ] as const) {
         source.addEventListener(kind, onEvent(kind) as EventListener);
       }
     } catch (err) {
       setLog((prev) => [...prev, { seq: prev.length + 1, text: `run failed to start: ${(err as Error).message}` }]);
     }
+  }
+
+  async function handleResume(activationKey: string) {
+    if (!executionId) return;
+    await resumeExecution(executionId, activationKey, resumeDraft[activationKey] ?? "");
   }
 
   async function handleExport() {
@@ -177,8 +247,20 @@ export function Canvas() {
             {name || "flowlathe"}
           </Typography>
           <Typography variant="body2">v{version}</Typography>
+          <Select
+            size="small"
+            value={newNodeKind}
+            onChange={(e) => setNewNodeKind(e.target.value as NodeKind)}
+            inputProps={{ "aria-label": "New node kind" }}
+          >
+            {NODE_KIND_OPTIONS.map((k) => (
+              <MenuItem key={k} value={k}>
+                {k}
+              </MenuItem>
+            ))}
+          </Select>
           <Button variant="outlined" color="inherit" onClick={addNode}>
-            Add Prompt Node
+            Add Node
           </Button>
           <Button variant="contained" color="secondary" onClick={handleSave} disabled={saving}>
             Save
@@ -219,46 +301,19 @@ export function Canvas() {
             <Controls />
           </ReactFlow>
         </div>
-        <Box sx={{ width: 320, borderLeft: 1, borderColor: "divider", display: "flex", flexDirection: "column" }}>
+        <Box sx={{ width: 340, borderLeft: 1, borderColor: "divider", display: "flex", flexDirection: "column" }}>
           <Box sx={{ p: 2 }}>
             <Typography variant="subtitle2">Node properties</Typography>
             {selectedNode ? (
               <Box key={selectedNode.id} sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
-                <TextField
-                  size="small"
-                  label="Template"
-                  multiline
-                  minRows={2}
-                  value={(selectedNode.data["template"] as string) ?? ""}
-                  onChange={(e) => updateSelectedNodeData({ template: e.target.value })}
-                  slotProps={{ htmlInput: { "aria-label": "Template" } }}
+                <NodeProperties
+                  node={selectedNode}
+                  providers={providers}
+                  modelsByProvider={modelsByProvider}
+                  otherNodes={nodes.filter((n) => n.id !== selectedNode.id)}
+                  onChange={updateSelectedNodeData}
+                  onParentChange={updateSelectedNodeParent}
                 />
-                <Select
-                  size="small"
-                  displayEmpty
-                  value={(selectedNode.data["providerId"] as string) ?? ""}
-                  onChange={(e) => updateSelectedNodeData({ providerId: e.target.value, modelId: "" })}
-                  inputProps={{ "aria-label": "Provider" }}
-                >
-                  {providers.map((p) => (
-                    <MenuItem key={p.id} value={p.id}>
-                      {p.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-                <Select
-                  size="small"
-                  displayEmpty
-                  value={(selectedNode.data["modelId"] as string) ?? ""}
-                  onChange={(e) => updateSelectedNodeData({ modelId: e.target.value })}
-                  inputProps={{ "aria-label": "Model" }}
-                >
-                  {(modelsByProvider[selectedNode.data["providerId"] as string] ?? []).map((m) => (
-                    <MenuItem key={m.id} value={m.modelName}>
-                      {m.modelName}
-                    </MenuItem>
-                  ))}
-                </Select>
               </Box>
             ) : (
               <Typography variant="body2" color="text.secondary">
@@ -267,6 +322,30 @@ export function Canvas() {
             )}
           </Box>
           <Divider />
+          {suspended.length > 0 && (
+            <>
+              <Box sx={{ p: 2 }}>
+                <Typography variant="subtitle2">Awaiting input</Typography>
+                {suspended.map((s) => (
+                  <Paper key={s.activationKey} sx={{ p: 1, mt: 1 }} variant="outlined">
+                    <Typography variant="body2">{s.prompt ?? s.message ?? `${s.nodeId} is paused`}</Typography>
+                    <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
+                      <TextField
+                        size="small"
+                        label="Answer"
+                        value={resumeDraft[s.activationKey] ?? ""}
+                        onChange={(e) => setResumeDraft((prev) => ({ ...prev, [s.activationKey]: e.target.value }))}
+                      />
+                      <Button size="small" variant="contained" onClick={() => void handleResume(s.activationKey)}>
+                        Resume
+                      </Button>
+                    </Box>
+                  </Paper>
+                ))}
+              </Box>
+              <Divider />
+            </>
+          )}
           <Box sx={{ p: 2, flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Typography variant="subtitle2">Execution log</Typography>
             <List dense sx={{ overflowY: "auto", flexGrow: 1 }} data-testid="execution-log">
@@ -291,6 +370,197 @@ export function Canvas() {
   );
 }
 
+function NodeProperties(props: {
+  node: Node;
+  providers: ProviderRecord[];
+  modelsByProvider: Record<string, ModelRecord[]>;
+  otherNodes: Node[];
+  onChange: (patch: Record<string, unknown>) => void;
+  onParentChange: (parentId: string) => void;
+}) {
+  const { node, providers, modelsByProvider, otherNodes, onChange, onParentChange } = props;
+  const data = node.data as Record<string, unknown>;
+  const type = node.type as NodeKind;
+
+  return (
+    <>
+      {type === "prompt" && (
+        <>
+          <TextField
+            size="small"
+            label="Template"
+            multiline
+            minRows={2}
+            value={(data["template"] as string) ?? ""}
+            onChange={(e) => onChange({ template: e.target.value })}
+            slotProps={{ htmlInput: { "aria-label": "Template" } }}
+          />
+          <Select
+            size="small"
+            displayEmpty
+            value={(data["providerId"] as string) ?? ""}
+            onChange={(e) => onChange({ providerId: e.target.value, modelId: "" })}
+            inputProps={{ "aria-label": "Provider" }}
+          >
+            {providers.map((p) => (
+              <MenuItem key={p.id} value={p.id}>
+                {p.name}
+              </MenuItem>
+            ))}
+          </Select>
+          <Select
+            size="small"
+            displayEmpty
+            value={(data["modelId"] as string) ?? ""}
+            onChange={(e) => onChange({ modelId: e.target.value })}
+            inputProps={{ "aria-label": "Model" }}
+          >
+            {(modelsByProvider[data["providerId"] as string] ?? []).map((m) => (
+              <MenuItem key={m.id} value={m.modelName}>
+                {m.modelName}
+              </MenuItem>
+            ))}
+          </Select>
+        </>
+      )}
+
+      {type === "router" && (
+        <>
+          <TextField
+            size="small"
+            label="Routes (comma-separated)"
+            value={((data["routes"] as string[]) ?? []).join(",")}
+            onChange={(e) => onChange({ routes: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+          />
+          <TextField
+            size="small"
+            label="Cases (JSON)"
+            multiline
+            minRows={2}
+            value={JSON.stringify(data["cases"] ?? [])}
+            onChange={(e) => {
+              try {
+                onChange({ cases: JSON.parse(e.target.value) });
+              } catch {
+                /* ignore invalid JSON until it parses */
+              }
+            }}
+          />
+          <TextField
+            size="small"
+            label="Default route"
+            value={(data["defaultRoute"] as string) ?? ""}
+            onChange={(e) => onChange({ defaultRoute: e.target.value })}
+          />
+        </>
+      )}
+
+      {type === "merge" && (
+        <Typography variant="body2" color="text.secondary">
+          No configurable properties — picks whichever of in1/in2 is connected.
+        </Typography>
+      )}
+
+      {type === "pause" && (
+        <TextField
+          size="small"
+          label="Message"
+          value={(data["message"] as string) ?? ""}
+          onChange={(e) => onChange({ message: e.target.value })}
+        />
+      )}
+
+      {type === "userInput" && (
+        <TextField
+          size="small"
+          label="Prompt"
+          value={(data["prompt"] as string) ?? ""}
+          onChange={(e) => onChange({ prompt: e.target.value })}
+        />
+      )}
+
+      {type === "loop" && (
+        <>
+          <TextField
+            size="small"
+            label="Init template"
+            value={(data["initTemplate"] as string) ?? ""}
+            onChange={(e) => onChange({ initTemplate: e.target.value })}
+          />
+          <TextField
+            size="small"
+            label="Accumulator port name"
+            value={(data["accPortName"] as string) ?? ""}
+            onChange={(e) => onChange({ accPortName: e.target.value })}
+          />
+          <TextField
+            size="small"
+            label="Stop value"
+            value={(data["stopValue"] as string) ?? ""}
+            onChange={(e) => onChange({ stopValue: e.target.value })}
+          />
+          <TextField
+            size="small"
+            type="number"
+            label="Max iterations"
+            value={(data["maxIterations"] as number) ?? 1}
+            onChange={(e) => onChange({ maxIterations: Number(e.target.value) })}
+          />
+        </>
+      )}
+
+      {type === "map" && (
+        <>
+          <TextField
+            size="small"
+            label="Items template (JSON array)"
+            value={(data["itemsTemplate"] as string) ?? ""}
+            onChange={(e) => onChange({ itemsTemplate: e.target.value })}
+          />
+          <TextField
+            size="small"
+            label="Item port name"
+            value={(data["itemPortName"] as string) ?? ""}
+            onChange={(e) => onChange({ itemPortName: e.target.value })}
+          />
+          <TextField
+            size="small"
+            type="number"
+            label="Max concurrency"
+            value={(data["maxConcurrency"] as number) ?? 1}
+            onChange={(e) => onChange({ maxConcurrency: Number(e.target.value) })}
+          />
+          <TextField
+            size="small"
+            type="number"
+            label="Max items"
+            value={(data["maxItems"] as number) ?? 1}
+            onChange={(e) => onChange({ maxItems: Number(e.target.value) })}
+          />
+        </>
+      )}
+
+      <Divider sx={{ my: 1 }} />
+      <Select
+        size="small"
+        displayEmpty
+        value={node.parentId ?? ""}
+        onChange={(e) => onParentChange(e.target.value)}
+        inputProps={{ "aria-label": "Parent (Loop/Map body of)" }}
+      >
+        <MenuItem value="">(top-level — not a loop/map body)</MenuItem>
+        {otherNodes
+          .filter((n) => n.type === "loop" || n.type === "map")
+          .map((n) => (
+            <MenuItem key={n.id} value={n.id}>
+              body of {(n.data["label"] as string) ?? n.id}
+            </MenuItem>
+          ))}
+      </Select>
+    </>
+  );
+}
+
 function describeEvent(event: RunEvent): string {
   switch (event.kind) {
     case "node_started":
@@ -301,6 +571,8 @@ function describeEvent(event: RunEvent): string {
       return `${event.nodeId}: finished -> ${event.output}`;
     case "node_failed":
       return `${event.nodeId}: failed (${event.error})`;
+    case "node_suspended":
+      return `${event.nodeId}: suspended (${event.reason.type})`;
     case "run_finished":
       return `run finished`;
     case "run_failed":

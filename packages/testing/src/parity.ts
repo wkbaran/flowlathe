@@ -6,7 +6,7 @@ import { compileGraph } from "@flowlathe/compiler";
 import type { FlowGraph, RunEvent } from "@flowlathe/core";
 import { runGraph } from "@flowlathe/interpreter";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
-import { InMemoryBlobStore, createRun } from "@flowlathe/runtime";
+import { createRun, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
 
 export interface TraceEntry {
   nodeId: string;
@@ -40,6 +40,7 @@ export async function traceViaInterpreter(
       blobs: new InMemoryBlobStore(),
       emit: (e) => events.push(e),
       clock: { now: () => 0 },
+      ...createSuspendRegistry(),
     },
   });
   await runGraph({ graph, run });

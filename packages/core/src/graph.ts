@@ -11,6 +11,8 @@ export const FlowNodeSchema = z.object({
   type: z.enum(NODE_KINDS),
   position: PositionSchema,
   data: z.record(z.string(), z.unknown()),
+  /** Loop/Map body membership: this node's activations are scoped under the named node. */
+  parentId: z.string().min(1).optional(),
 });
 
 export const FlowEdgeSchema = z.object({

@@ -29,9 +29,27 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-loop':
+        specifier: workspace:*
+        version: link:../nodes/loop
+      '@flowlathe/node-map':
+        specifier: workspace:*
+        version: link:../nodes/map
+      '@flowlathe/node-merge':
+        specifier: workspace:*
+        version: link:../nodes/merge
+      '@flowlathe/node-pause':
+        specifier: workspace:*
+        version: link:../nodes/pause
       '@flowlathe/node-prompt':
         specifier: workspace:*
         version: link:../nodes/prompt
+      '@flowlathe/node-router':
+        specifier: workspace:*
+        version: link:../nodes/router
+      '@flowlathe/node-user-input':
+        specifier: workspace:*
+        version: link:../nodes/user-input
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -58,9 +76,27 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-loop':
+        specifier: workspace:*
+        version: link:../nodes/loop
+      '@flowlathe/node-map':
+        specifier: workspace:*
+        version: link:../nodes/map
+      '@flowlathe/node-merge':
+        specifier: workspace:*
+        version: link:../nodes/merge
+      '@flowlathe/node-pause':
+        specifier: workspace:*
+        version: link:../nodes/pause
       '@flowlathe/node-prompt':
         specifier: workspace:*
         version: link:../nodes/prompt
+      '@flowlathe/node-router':
+        specifier: workspace:*
+        version: link:../nodes/router
+      '@flowlathe/node-user-input':
+        specifier: workspace:*
+        version: link:../nodes/user-input
       '@flowlathe/runtime':
         specifier: workspace:*
         version: link:../runtime
@@ -78,7 +114,103 @@ importers:
         specifier: 5.0.0
         version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
 
+  packages/nodes/loop:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/map:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/merge:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/pause:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
   packages/nodes/prompt:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/router:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/user-input:
     dependencies:
       '@flowlathe/core':
         specifier: workspace:*
@@ -143,9 +275,27 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-loop':
+        specifier: workspace:*
+        version: link:../nodes/loop
+      '@flowlathe/node-map':
+        specifier: workspace:*
+        version: link:../nodes/map
+      '@flowlathe/node-merge':
+        specifier: workspace:*
+        version: link:../nodes/merge
+      '@flowlathe/node-pause':
+        specifier: workspace:*
+        version: link:../nodes/pause
       '@flowlathe/node-prompt':
         specifier: workspace:*
         version: link:../nodes/prompt
+      '@flowlathe/node-router':
+        specifier: workspace:*
+        version: link:../nodes/router
+      '@flowlathe/node-user-input':
+        specifier: workspace:*
+        version: link:../nodes/user-input
     devDependencies:
       typescript:
         specifier: 5.9.3

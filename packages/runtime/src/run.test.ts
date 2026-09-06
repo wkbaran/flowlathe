@@ -2,6 +2,7 @@ import type { RunEvent, RuntimeHost } from "@flowlathe/core";
 import { describe, expect, it } from "vitest";
 import { InMemoryBlobStore } from "./memory-blob-store.js";
 import { createRun } from "./run.js";
+import { createSuspendRegistry } from "./suspend-registry.js";
 
 function testHost(): { host: RuntimeHost; events: RunEvent[] } {
   const events: RunEvent[] = [];
@@ -10,6 +11,7 @@ function testHost(): { host: RuntimeHost; events: RunEvent[] } {
     blobs: new InMemoryBlobStore(),
     emit: (e) => events.push(e),
     clock: { now: () => 0 },
+    ...createSuspendRegistry(),
   };
   return { host, events };
 }

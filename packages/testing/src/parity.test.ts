@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
+import { mapFanoutGraph, mapFanoutResponses } from "./golden/map-fanout.js";
+import { routerMergeGraph, routerMergeResponses } from "./golden/router-merge.js";
 import { twoNodeChainGraph, twoNodeChainResponses } from "./golden/two-node-chain.js";
 import { traceViaCompiledScript, traceViaInterpreter } from "./parity.js";
 
@@ -24,6 +26,29 @@ describe("interpreter/compiler parity", () => {
       const viaInterpreter = await traceViaInterpreter(fanOutGraph, fanOutResponses);
       const viaCompiled = traceViaCompiledScript(fanOutGraph, fanOutResponses);
       expect(viaCompiled).toEqual(viaInterpreter);
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a router+merge diamond (only the taken branch runs)",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(routerMergeGraph, routerMergeResponses);
+      const viaCompiled = traceViaCompiledScript(routerMergeGraph, routerMergeResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter.map((e) => e.nodeId)).not.toContain("proseAnswer");
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a map fan-out over three items, joined in order",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(mapFanoutGraph, mapFanoutResponses);
+      const viaCompiled = traceViaCompiledScript(mapFanoutGraph, mapFanoutResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      const mapEntry = viaInterpreter.find((e) => e.nodeId === "m");
+      expect(mapEntry && JSON.parse(mapEntry.output)).toEqual(["X_RESULT", "Y_RESULT", "Z_RESULT"]);
     },
     15_000,
   );

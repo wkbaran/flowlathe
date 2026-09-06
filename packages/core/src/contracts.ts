@@ -1,3 +1,5 @@
+import type { SuspendReason } from "./activation.js";
+
 export interface ProviderCallRequest {
   providerId: string;
   modelId: string;
@@ -37,6 +39,7 @@ export type RunEvent =
       latencyMs: number;
     }
   | { kind: "node_failed"; nodeId: string; error: string }
+  | { kind: "node_suspended"; nodeId: string; activationKey: string; reason: SuspendReason }
   | { kind: "run_finished"; outputs: Record<string, unknown> }
   | { kind: "run_failed"; error: string };
 
@@ -54,6 +57,9 @@ export interface RuntimeHost {
   blobs: BlobStore;
   emit(event: RunEvent): void;
   clock: Clock;
+  /** Registers a pending resume for `key` and resolves once `resolveSuspended` is called with it. */
+  suspend(key: string, reason: SuspendReason): Promise<string>;
+  resolveSuspended(key: string, value: string): void;
 }
 
 export interface PromptResult {

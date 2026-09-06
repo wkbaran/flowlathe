@@ -19,6 +19,10 @@ export function startExecution(db: Db, flowVersionId: string): StartedExecution 
   return { executionId, branchId };
 }
 
+export function setExecutionStatus(db: Db, executionId: string, status: "running" | "awaiting_input"): void {
+  db.update(executions).set({ status }).where(eq(executions.id, executionId)).run();
+}
+
 export function finishExecution(
   db: Db,
   executionId: string,

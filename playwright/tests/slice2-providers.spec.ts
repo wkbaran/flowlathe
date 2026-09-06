@@ -27,7 +27,7 @@ test("creates a provider and model, and the canvas picks it up in the property p
   await page.getByRole("link", { name: "Flows" }).click();
   await page.getByLabel("New flow name").fill("Provider Test");
   await page.getByRole("button", { name: "New Flow" }).click();
-  await page.getByRole("button", { name: "Add Prompt Node" }).click();
+  await page.getByRole("button", { name: "Add Node" }).click();
   await page.getByTestId("node-node-1").click();
 
   await page.getByRole("combobox", { name: "Provider" }).click();

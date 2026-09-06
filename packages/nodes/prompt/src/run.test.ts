@@ -16,6 +16,8 @@ function fakeCtx(overrides: Partial<RuntimeHost> = {}): { ctx: RuntimeHost; even
     blobs: { put: () => "", get: () => undefined },
     emit: (event) => events.push(event),
     clock: { now: () => 0 },
+    suspend: () => new Promise(() => undefined),
+    resolveSuspended: () => undefined,
     ...overrides,
   };
   return { ctx, events };
