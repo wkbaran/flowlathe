@@ -108,11 +108,11 @@ rediscover them the hard way.
   by matching `extractTemplateVars(template)` against `edge.targetHandle`, so a template like
   `{{ctx}}` wired via the canvas's one visual handle produces an edge with `targetHandle: "input"`
   that never satisfies the `ctx` port, and the node hangs forever ("cycle detected or missing
-  upstream node"). Wire a PromptNode from anything (including a ContextTransform's `output` port)
-  using `{{input}}` as the template variable name, not a descriptive one.
-- **A "State declaration UI, merge rules, the built-in read_state/write_state tool, and all four
-  context transforms" slice (append/drop-before/filter-role/summarize) landed with these scope
-  decisions, each documented because a future agent extending State or Context could get bitten:**
+  upstream node"). Wire a PromptNode from anything using `{{input}}` as the template variable
+  name, not a descriptive one.
+- **A "State declaration UI, merge rules, the built-in read_state/write_state tool" slice landed
+  with these scope decisions, each documented because a future agent extending State could get
+  bitten:**
   - **Tool-calling exists only for the two built-in State tools, not as a general mechanism.**
     `ProviderCallRequest.tools`/`ProviderCallResult.toolCalls` are real (both `MockProviderAdapter`
     and `OllamaProviderAdapter` support them — Ollama by switching to `/api/chat`, since `/api/generate`
@@ -124,27 +124,11 @@ rediscover them the hard way.
     doesn't refire forever). This is a testing convention, not how a real model's tool-calling
     works — it exists because the default (no-table) mock mode is a pure echo with no reasoning of
     its own, and parity/e2e tests need a deterministic way to exercise the tool-loop.
-  - **A context is a plain `ContextMessage[]` flowing through ports as JSON** (`packages/core/src/context.ts`),
-    not the `contexts`/`messages`/`context_transform_calls` DB tables' actual runtime representation
-    — those tables exist purely as persisted lineage (written once per `context_transform` event,
-    read by nothing yet), not as the live value a node operates on. A `ContextTransform` node has
-    two output ports: `output` (flat text, `role: content` per line — for a plain-string consumer
-    like a PromptNode's `{{input}}`) and `context` (the JSON, for chaining into another
-    ContextTransform). `startsNewContext: true` means the node has NO `context` input port at all
-    (not an optional/unwired one) — see the next point for why that distinction matters.
   - **Every port a node declares via `inputPorts()` must have a real incoming edge, always** — the
     interpreter's `isReady()` requires ALL declared ports (even ones marked `required: false`) to be
     non-`empty`, and a port with zero edges stays `empty` forever. "Optional" only ever meant
-    "allowed to resolve to `never`," never "allowed to have no edge." This predates Slice 5 (Merge's
-    `in1`/`in2` already relied on it) but Slice 5 is the first place a node's port *list itself*
-    varies by config (`ContextTransform.startsNewContext`), making the distinction load-bearing for
-    the first time.
-  - **The compiler's `accessorExpr` used to hardcode `.output` as the field read off any "default"
-    node's result, ignoring `edge.sourceHandle` entirely** — harmless while every such node kind had
-    exactly one output port literally called `output`, but wrong for `ContextTransform` (`output` +
-    `context`). Fixed to read `edge.sourceHandle` (falling back to `"output"` for the no-edge
-    terminal-node case). Interpreter parity was never at risk since `portSlot()` already indexed by
-    the real port name — only codegen needed the fix.
+    "allowed to resolve to `never`," never "allowed to have no edge." Merge's `in1`/`in2` already
+    relied on this; Gate's single `input` port does too.
   - **State does not fork across branches.** `state_writes`/`state_reads` carry `branch_id`, but
     `stepBack` (Slice 4) never copies a branch's state rows onto the new fork — a step-mode
     `StateStore` is rebuilt fresh on every `stepOnce` call by replaying only `listStateWritesForBranch`
@@ -158,3 +142,52 @@ rediscover them the hard way.
     by `entry` + `seq`/`seqSeen`, resolving each side's owning node via `step_id -> steps.node_id`)
     after a run/step/branch-switch and overlays synthetic dashed `Edge` objects, never merged into
     the saved graph.
+- **Context isn't a node a flow author wires — it's ambient, per-prompt-node memory, replacing an
+  earlier ContextTransform-node design this codebase briefly had and then removed.** Every
+  `PromptNode` call automatically appends its own turn (`{role:"user", content: renderedPrompt}` +
+  `{role:"assistant", content: result.content}`) to a context keyed by **the node's own flow-graph
+  id** (`packages/runtime/src/context-store.ts`), flattened as `role: content` lines and prepended
+  to the next call's prompt — so a node that's only ever dispatched once behaves exactly as if
+  context didn't exist (empty context in, nothing to prepend), and only a repeatedly-dispatched
+  node (a Loop/Map body) actually accumulates anything. This is why `contextNodeId` exists on
+  `PromptSpec`: a Loop/Map body's `id` gets rewritten to a *scoped* activation key per iteration
+  (`body@loop:0`, `body@loop:1`, …) for logging, but its **context** must stay keyed by the one
+  static node id across iterations or "memory" would reset every iteration — the interpreter's
+  `dispatchLoopOrMap` and the compiler's `emitLoopOrMap` both set `contextNodeId` to the body's
+  unscoped id alongside the scoped `id`, and both must be kept in sync if that convention changes
+  (same class of manual-parity risk as the scoped-activation-key convention above).
+- **A "Gate" node overrides ambient LLM settings for everything wired downstream, and always wins
+  over a node's own local setting.** It's a diamond-shaped (`NodeCard`'s `shape="diamond"` via
+  `clip-path`), single-input/single-output pass-through node (`packages/nodes/gate`) whose only
+  real job is a side effect: writing into an ambient `LlmConfigStore` (`temperature`, `topK`,
+  `compactionMethod`, `compactionThreshold`) that `runPrompt` reads before every call, preferring
+  the ambient value over the node's own (`ambient.temperature ?? spec.temperature`). `LlmConfigStore`
+  and `ContextStore` (above) are deliberately separate from `StateStore` — same shape of problem
+  (ambient, mutable, read/written outside the port graph) but a different, non-user-visible channel;
+  they don't appear in the State declaration panel and aren't merge-rule-configurable.
+- **Compaction only fires when a Gate has configured it, and the methods are deliberately
+  parameter-free** (`drop-oldest-half` / `summarize-oldest-half` — see `packages/core/src/context.ts`),
+  unlike the removed ContextTransform node's explicit indices/role lists. A Gate only decides
+  *whether* (via `compactionThreshold`: a fixed token count, or a percentage of a context window
+  the author copies in as a literal number — no live DB lookup at runtime, keeping compiled scripts
+  parity-safe) and *which* policy runs; `runPrompt`'s `maybeCompact` checks the threshold against
+  `estimateTokenCount` (a crude ~4-chars/token heuristic, not a real tokenizer) before building
+  each call. `system`-role messages are never cut by either method.
+- **Found while building the above: a real, pre-existing interpreter concurrency bug.**
+  `GraphEngine.remaining()` (`packages/interpreter/src/run-graph.ts`) used to only exclude nodes
+  already in `this.outputs`, not ones currently in `this.running` — so if a dispatched node's work
+  spanned more than one microtask (any `await`), `runToCompletion`'s loop could re-admit and
+  re-dispatch the *same* node a second time before its first dispatch finished. Harmless by
+  accident everywhere `dispatchNode` used to resolve within one synchronous tick; `runPrompt`
+  gaining a genuine `await maybeCompact(...)` on every call was enough extra latency to expose it
+  (surfaced as node output containing its own prior output, e.g. `"user: X\nassistant: X\nuser: X"`).
+  Fixed by also excluding `this.running` from `remaining()`.
+- **Two Playwright e2e gotchas found writing the Gate spec:** (1) `.fill()` on a React-controlled
+  `type="number"` MUI field is flaky specifically under fast/no-delay automation (passes reliably
+  via a human or MCP-paced session, same class of issue as the stale-DOM entry above) — use
+  `.pressSequentially()` for numeric fields instead. (2) Default node-add positions are spaced far
+  enough apart (see below) that a 3rd node can land outside the initial viewport with a stale/wrong
+  `boundingBox()`, silently dropping a drag-to-wire gesture — click "Fit View" before wiring nodes
+  that were just added. Relatedly, `Canvas.tsx`'s `addNode()` position formula was widened
+  (`x: 80 + ns.length * 260`, was `* 60`) so the diamond Gate — visually wider than a rect node —
+  never lands overlapping the previous node by default.
