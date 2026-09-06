@@ -65,3 +65,23 @@ rediscover them the hard way.
   (through the same persisted+broadcast `emit` path as node events) before marking the execution
   failed — this is also what made the property-panel bug above diagnosable at all, since the UI log
   went from silently empty to showing the actual missing-template-variable error.
+- **Loop/Map bodies are a single node, not an arbitrary subgraph (v1 scope).** A body node is
+  linked via `FlowNode.parentId` pointing at the Loop/Map node's id (mirrors xyflow's own
+  parent/child node convention). The body's per-iteration input isn't a normal edge — it's
+  synthetically injected by the interpreter (Loop: `accPortName`, Map: `itemPortName`), and the
+  interpreter rewrites the body's `spec.id` to a scoped activation key
+  (`` `${bodyNodeId}@${loopOrMapNodeId}:${index}` ``, via `core`'s `activationKey()`) so
+  concurrent/repeated iterations don't collide in logs or in the mock-response table. **The
+  compiled-script codegen mirrors this scoped-id convention by hand** (`compile-graph.ts`'s
+  `emitLoopOrMap`) rather than importing `activationKey` — if that format ever changes, both
+  places need updating or the parity harness's Map/Loop fixtures will silently diverge without
+  either side erroring.
+- **Compiled-script Router branches are exactly one node deep before converging (v1 scope gap,
+  interpreter has no such limit).** `compile-graph.ts` only special-cases nodes *directly* targeted
+  by a Router edge (guarding them with `if/else if` and declaring them `let ... | undefined`);
+  anything further downstream in a branch is emitted as an unconditional call that will throw on
+  `undefined.output` at runtime if that branch wasn't taken. The interpreter's PortSlot propagation
+  has no such restriction — it handles arbitrarily long/branching chains correctly. Don't add a
+  golden parity fixture with a multi-node-deep branch without extending the compiler's guard
+  propagation first (a general dominator-frontier walk), or the compiled path will crash where the
+  interpreter succeeds.
