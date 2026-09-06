@@ -1,7 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { ensureDefaultMockProvider, openDb, runMigrations } from "@flowlathe/persistence";
+import type { ToolRegistration } from "@flowlathe/core";
+import { ensureDefaultMockProvider, getPluginCredential, openDb, runMigrations, setPluginCredential } from "@flowlathe/persistence";
+import { createSpotifyToolset, SpotifyClient, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
 import { SchedulerRegistry } from "./scheduler-registry.js";
@@ -22,7 +24,25 @@ ensureDefaultMockProvider(opened.db);
 const credentialKey = resolveCredentialKey(dataDir);
 const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
 
-const app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, staticRoot });
+const spotifyClientId = process.env["SPOTIFY_CLIENT_ID"];
+let spotifyConfig: SpotifyOAuthConfig | undefined;
+let pluginToolsets: ToolRegistration[] = [];
+if (spotifyClientId) {
+  spotifyConfig = {
+    clientId: spotifyClientId,
+    redirectUri: process.env["SPOTIFY_REDIRECT_URI"] ?? `http://127.0.0.1:${port}/api/plugins/spotify/oauth/callback`,
+  };
+  const spotifyClient = new SpotifyClient({
+    config: spotifyConfig,
+    tokens: {
+      getRefreshToken: () => getPluginCredential(opened.db, credentialKey, "spotify"),
+      saveRefreshToken: (token) => setPluginCredential(opened.db, credentialKey, "spotify", token),
+    },
+  });
+  pluginToolsets = createSpotifyToolset(spotifyClient);
+}
+
+const app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, staticRoot, spotifyConfig, pluginToolsets });
 
 app.listen({ port, host: "127.0.0.1" }, (err, address) => {
   if (err) {

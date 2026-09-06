@@ -191,3 +191,51 @@ rediscover them the hard way.
   that were just added. Relatedly, `Canvas.tsx`'s `addNode()` position formula was widened
   (`x: 80 + ns.length * 260`, was `* 60`) so the diamond Gate — visually wider than a rect node —
   never lands overlapping the previous node by default.
+- **Tool-calling was generalized from a hardcoded `read_state`/`write_state` if/else into a real
+  `ToolRegistry` (`ToolRegistry`/`ToolRegistration` in `packages/core/src/contracts.ts`,
+  `createToolRegistry`/`stateToolset` in `packages/runtime/src/tool-registry.ts`), and the first
+  third-party plugin (`@flowlathe/plugin-spotify`) was built on top of it. Scope decisions a future
+  agent extending this could get bitten by:**
+  - **`ToolRegistration` (the `{toolset, spec, handler}` shape a plugin contributes) lives in
+    `@flowlathe/core`, not `@flowlathe/runtime` where `createToolRegistry` itself lives.** Runtime's
+    transitive closure pulls in every node kind (`run.ts` imports all of them); a plugin package
+    only needs the plain data shape, not that whole graph, so it depends on `core` alone.
+  - **Plugins are monorepo-internal packages under `packages/plugins/*` (a new pnpm-workspace glob),
+    registered by a short static list in `packages/server/src/index.ts` — not discovered or loaded
+    dynamically at runtime.** This matches the existing node-kind extension style (compile-time,
+    single-author) and deliberately avoids the arbitrary-code-loading surface a real plugin
+    directory (Hermes-style) would need; add a new plugin by adding a workspace package and one
+    `if (ENV_VAR) { ... }` block in `index.ts`, not by writing a loader.
+  - **`PromptSpec.enabledToolsets: string[]` sits alongside the older `enableStateTools: boolean`
+    rather than replacing it** — changing the latter would have meant touching the Slice-5 e2e spec
+    and every existing test fixture's literal for no behavioral gain. `runPrompt` just ORs them:
+    `[...(enableStateTools ? ["state"] : []), ...enabledToolsets]`.
+  - **A schema field with a Zod `.default()` (like `enabledToolsets`) reaches the interpreter path
+    for free** (`registry[kind].schema.parse(node.data)` in `run-graph.ts` already applies it) **but
+    NOT the compiled-script path**, which used to serialize `node.data` raw
+    (`JSON.stringify({ id: node.id, ...node.data })` in `compile-graph.ts`). Adding `enabledToolsets`
+    exposed this: the interpreter saw `[]`, the compiled script saw `undefined`, and
+    `[...undefined]` threw at runtime — a parity bug that only fires for a *new* schema field with a
+    default, so it's easy to reintroduce. Fixed generally (not just for this one field) by adding a
+    `schemaTable: Record<NodeKind, ZodTypeAny>` next to `emitTable` and calling
+    `schemaTable[node.type].parse(node.data)` before serializing. Any future schema default is now
+    covered automatically; don't revert this to raw `node.data` serialization.
+  - **A plugin's OAuth token storage reuses `providers.secretEnc`'s exact encryption scheme** (AES-
+    256-GCM via `packages/persistence/src/credentials.ts`'s `encryptSecret`/`decryptSecret`) through
+    a new, deliberately generic `plugin_credentials` table (`pluginId` → one opaque encrypted
+    string) rather than a Spotify-specific table — the payload's shape is the plugin's own business.
+  - **`SpotifyClient`'s access-token refresh must be routed through the same overridable `fetchImpl`
+    its API calls use**, not the plain global `fetch` — `@flowlathe/plugin-spotify`'s `oauth.ts`
+    functions (`exchangeCodeForToken`/`refreshAccessToken`) take `fetchImpl` as a parameter
+    (defaulting to global `fetch`) specifically so `SpotifyClient` can pass its own `this.fetchImpl`
+    through. Missing this the first time made client tests silently hit the real Spotify token
+    endpoint and fail with a real "invalid_client" error instead of using the mock.
+  - **The PKCE `state`/verifier map for the Spotify OAuth dance lives in server memory, not the
+    DB** (`packages/server/src/routes/plugins-spotify.ts`), consumed exactly once and TTL'd at 10
+    minutes — acceptable because this is a single-user local server; a server restart mid-flow just
+    means the user clicks "Connect" again.
+  - **An unconfigured plugin (no `SPOTIFY_CLIENT_ID`) registers zero tool specs**, rather than
+    Hermes's "visible but gated" pattern (tool always listed, dispatch blocked until auth). Simpler,
+    at the cost of a model never being told the tool exists at all until an operator sets the env
+    var — a deliberate v1 tradeoff, revisit if a flow author needs to *discover* a tool before an
+    operator configures it.

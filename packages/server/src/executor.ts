@@ -1,4 +1,4 @@
-import type { FlowGraph, Scheduler } from "@flowlathe/core";
+import type { FlowGraph, Scheduler, ToolRegistration } from "@flowlathe/core";
 import { runGraph } from "@flowlathe/interpreter";
 import { type Db, finishExecution, startExecution } from "@flowlathe/persistence";
 import type { ExecutionHub } from "./execution-hub.js";
@@ -10,6 +10,7 @@ export interface RunFlowOptions {
   scheduler: Scheduler;
   flowVersionId: string;
   graph: FlowGraph;
+  pluginToolsets?: ToolRegistration[] | undefined;
 }
 
 export interface RunFlowHandle {
@@ -19,7 +20,7 @@ export interface RunFlowHandle {
 
 /** Kicks off a flow execution asynchronously; callers get the ids back immediately. */
 export function runFlow(opts: RunFlowOptions): RunFlowHandle {
-  const { db, hub, scheduler, flowVersionId, graph } = opts;
+  const { db, hub, scheduler, flowVersionId, graph, pluginToolsets } = opts;
   const { executionId, branchId } = startExecution(db, flowVersionId, "run");
   const { run, resolveSuspended, emit } = buildHostAndRun({
     db,
@@ -28,6 +29,7 @@ export function runFlow(opts: RunFlowOptions): RunFlowHandle {
     executionId,
     branchId,
     stateDecls: graph.state,
+    pluginToolsets,
   });
   hub.registerResolver(executionId, resolveSuspended);
 

@@ -6,7 +6,9 @@ import {
   createRun,
   createStateStore,
   createSuspendRegistry,
+  createToolRegistry,
   InMemoryBlobStore,
+  stateToolset,
 } from "@flowlathe/runtime";
 import { describe, expect, it } from "vitest";
 import { runGraph } from "./run-graph.js";
@@ -26,15 +28,17 @@ function makeRun(): { run: ReturnType<typeof createRun>; events: RunEvent[]; hos
   };
   const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
   const suspendRegistry = createSuspendRegistry();
+  const state = createStateStore(emit, { decls: [] });
   const run = createRun({
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
       emit,
       clock: { now: () => 0 },
-      state: createStateStore(emit, { decls: [] }),
+      state,
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
+      tools: createToolRegistry(stateToolset(state)),
       ...suspendRegistry,
     },
   });
@@ -74,15 +78,17 @@ function identityRun(): ReturnType<typeof createRun> {
   const scheduler = new SimpleScheduler({
     mock: { adapter: { kind: "identity", call: async (req: { prompt: string }) => ({ content: req.prompt, finishReason: "stop" }) }, maxParallel: 8 },
   });
+  const state = noopState();
   return createRun({
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
       emit: () => undefined,
       clock: { now: () => 0 },
-      state: noopState(),
+      state,
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
+      tools: createToolRegistry(stateToolset(state)),
       ...createSuspendRegistry(),
     },
   });
@@ -176,6 +182,7 @@ describe("runGraph — fan-out concurrency", () => {
         state: noopState(),
         llmConfig: createLlmConfigStore(),
         context: createContextStore(),
+        tools: createToolRegistry(stateToolset(noopState())),
         ...createSuspendRegistry(),
       },
     });
@@ -266,6 +273,7 @@ describe("runGraph — loop", () => {
         state: noopState(),
         llmConfig: createLlmConfigStore(),
         context: createContextStore(),
+        tools: createToolRegistry(stateToolset(noopState())),
         ...createSuspendRegistry(),
       },
     });
@@ -285,6 +293,7 @@ describe("runGraph — loop", () => {
         state: noopState(),
         llmConfig: createLlmConfigStore(),
         context: contextStore,
+        tools: createToolRegistry(stateToolset(noopState())),
         ...createSuspendRegistry(),
       },
     });

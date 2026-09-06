@@ -6,7 +6,9 @@ import {
   createRun,
   createStateStore,
   createSuspendRegistry,
+  createToolRegistry,
   InMemoryBlobStore,
+  stateToolset,
 } from "@flowlathe/runtime";
 import { describe, expect, it } from "vitest";
 import { GraphEngine } from "./run-graph.js";
@@ -19,15 +21,17 @@ const promptData = (template: string) => ({ template, providerId: "mock", modelI
 
 function makeRun(): ReturnType<typeof createRun> {
   const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
+  const state = createStateStore(() => undefined, { decls: [] });
   return createRun({
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
       emit: () => undefined,
       clock: { now: () => 0 },
-      state: createStateStore(() => undefined, { decls: [] }),
+      state,
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
+      tools: createToolRegistry(stateToolset(state)),
       ...createSuspendRegistry(),
     },
   });

@@ -95,7 +95,7 @@ const NODE_KIND_OPTIONS: NodeKind[] = [
 function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
   switch (type) {
     case "prompt":
-      return { label: id, template: "", providerId: "mock", modelId: "mock", enableStateTools: false };
+      return { label: id, template: "", providerId: "mock", modelId: "mock", enableStateTools: false, enabledToolsets: [] };
     case "router":
       return { label: id, routes: ["a", "b"], cases: [{ value: "a", route: "a" }], defaultRoute: "b" };
     case "merge":
@@ -677,6 +677,23 @@ function NodeProperties(props: {
               />
             }
             label="Enable read_state/write_state tool"
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={((data["enabledToolsets"] as string[] | undefined) ?? []).includes("spotify")}
+                onChange={(e) => {
+                  const current = (data["enabledToolsets"] as string[] | undefined) ?? [];
+                  onChange({
+                    enabledToolsets: e.target.checked
+                      ? [...current, "spotify"]
+                      : current.filter((t) => t !== "spotify"),
+                  });
+                }}
+              />
+            }
+            label="Enable Spotify tools (search/playlists/library)"
           />
           <TextField
             size="small"

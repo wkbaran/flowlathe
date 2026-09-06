@@ -1,5 +1,5 @@
 import type { ServerResponse } from "node:http";
-import type { Scheduler } from "@flowlathe/core";
+import type { Scheduler, ToolRegistration } from "@flowlathe/core";
 import {
   type Db,
   getExecution,
@@ -24,10 +24,11 @@ export interface ExecutionRouteDeps {
   db: Db;
   hub: ExecutionHub;
   scheduler: Scheduler;
+  pluginToolsets?: ToolRegistration[] | undefined;
 }
 
 export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRouteDeps): void {
-  const { db, hub, scheduler } = deps;
+  const { db, hub, scheduler, pluginToolsets } = deps;
 
   app.get<{ Params: { id: string }; Querystring: { branchId?: string } }>(
     "/api/executions/:id",
@@ -84,6 +85,7 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
         graph,
         executionId: request.params.id,
         branchId: parsed.data.branchId,
+        pluginToolsets,
       });
       return outcome;
     } catch (err) {

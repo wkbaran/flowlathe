@@ -13,6 +13,7 @@ function fakeCtx(): RuntimeHost {
     state: { read: () => undefined, write: () => undefined },
     llmConfig: { get: () => ({}), set: () => undefined },
     context: { get: () => [], append: () => undefined, replace: () => undefined },
+    tools: { specsFor: () => [], invoke: async () => "" },
   };
 }
 

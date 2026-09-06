@@ -12,7 +12,9 @@ import {
   createRun,
   createStateStore,
   createSuspendRegistry,
+  createToolRegistry,
   InMemoryBlobStore,
+  stateToolset,
 } from "@flowlathe/runtime";
 
 export interface TraceEntry {
@@ -44,15 +46,17 @@ export async function traceViaInterpreter(
   const emit = (e: RunEvent): void => {
     events.push(e);
   };
+  const state = createStateStore(emit, { decls: graph.state });
   const run = createRun({
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
       emit,
       clock: { now: () => 0 },
-      state: createStateStore(emit, { decls: graph.state }),
+      state,
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
+      tools: createToolRegistry(stateToolset(state)),
       ...createSuspendRegistry(),
     },
   });

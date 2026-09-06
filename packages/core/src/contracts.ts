@@ -3,7 +3,7 @@ import type { CompactionMethod, ContextMessage, ContextStore, LlmConfigStore } f
 import type { MergeRule, StateStore } from "./state.js";
 
 /** JSON-schema-shaped, loosely typed — just enough for the two providers we implement to
- *  describe a callable tool. Kept minimal deliberately: full tool/MCP support is Slice 6. */
+ *  describe a callable tool. Kept minimal deliberately: general MCP support is still future work. */
 export interface ToolSpec {
   name: string;
   description: string;
@@ -18,6 +18,28 @@ export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+}
+
+export interface ToolInvokeMeta {
+  activationKey: string;
+}
+
+/** Ambient, non-user-visible (same family as LlmConfigStore/ContextStore): a set of named tools
+ *  grouped into "toolsets" a PromptSpec opts into by name (e.g. "state", "spotify"). Built-in
+ *  state tools and plugin-provided tools (e.g. a Spotify integration) register through the same
+ *  path — see `createToolRegistry` in @flowlathe/runtime. */
+export interface ToolRegistry {
+  specsFor(toolsets: string[]): ToolSpec[];
+  invoke(name: string, args: Record<string, unknown>, meta: ToolInvokeMeta): Promise<string>;
+}
+
+/** One named tool's contribution to a ToolRegistry, grouped by toolset. Defined here (not in
+ *  @flowlathe/runtime, where `createToolRegistry` lives) so a plugin package can describe its
+ *  tools without depending on runtime's much heavier transitive closure (every node kind). */
+export interface ToolRegistration {
+  toolset: string;
+  spec: ToolSpec;
+  handler: (args: Record<string, unknown>, meta: ToolInvokeMeta) => Promise<string> | string;
 }
 
 export interface ProviderCallRequest {
@@ -106,6 +128,7 @@ export interface RuntimeHost {
   state: StateStore;
   llmConfig: LlmConfigStore;
   context: ContextStore;
+  tools: ToolRegistry;
 }
 
 export interface PromptResult {

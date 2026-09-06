@@ -1,12 +1,46 @@
-import type { ContextMessage, LlmConfig, RunEvent, RuntimeHost } from "@flowlathe/core";
+import {
+  READ_STATE_TOOL,
+  WRITE_STATE_TOOL,
+  type ContextMessage,
+  type LlmConfig,
+  type RunEvent,
+  type RuntimeHost,
+  type StateStore,
+  type ToolRegistry,
+} from "@flowlathe/core";
 import { describe, expect, it } from "vitest";
 import { runPrompt } from "./run.js";
+
+/** Stands in for @flowlathe/runtime's real tool registry — nodes/prompt can't depend on runtime
+ *  (runtime depends on it), so tests fake just enough to exercise the tool-call loop. */
+function fakeToolRegistry(state: StateStore): ToolRegistry {
+  return {
+    specsFor: (toolsets) => (toolsets.includes("state") ? [READ_STATE_TOOL, WRITE_STATE_TOOL] : []),
+    invoke: async (name, args, meta) => {
+      if (name === "read_state") {
+        const entry = String(args["entry"]);
+        const value = state.read(entry, { viaTool: true, activationKey: meta.activationKey });
+        return `[read_state ${entry}]: ${JSON.stringify(value)}`;
+      }
+      if (name === "write_state") {
+        const entry = String(args["entry"]);
+        state.write(entry, args["value"], { viaTool: true, activationKey: meta.activationKey });
+        return `[write_state ${entry}]: ok`;
+      }
+      return `[${name}]: error - unknown tool`;
+    },
+  };
+}
 
 function fakeCtx(overrides: Partial<RuntimeHost> = {}): { ctx: RuntimeHost; events: RunEvent[] } {
   const events: RunEvent[] = [];
   const values = new Map<string, unknown>();
   let llmConfig: LlmConfig = {};
   const contexts = new Map<string, ContextMessage[]>();
+  const state: StateStore = overrides.state ?? {
+    read: (entry) => values.get(entry),
+    write: (entry, value) => values.set(entry, value),
+  };
   const ctx: RuntimeHost = {
     scheduler: {
       submit: async (req) => ({
@@ -21,10 +55,7 @@ function fakeCtx(overrides: Partial<RuntimeHost> = {}): { ctx: RuntimeHost; even
     clock: { now: () => 0 },
     suspend: () => new Promise(() => undefined),
     resolveSuspended: () => undefined,
-    state: {
-      read: (entry) => values.get(entry),
-      write: (entry, value) => values.set(entry, value),
-    },
+    state,
     llmConfig: {
       get: () => llmConfig,
       set: (patch) => {
@@ -36,6 +67,7 @@ function fakeCtx(overrides: Partial<RuntimeHost> = {}): { ctx: RuntimeHost; even
       append: (nodeId, turns) => contexts.set(nodeId, [...(contexts.get(nodeId) ?? []), ...turns]),
       replace: (nodeId, messages) => contexts.set(nodeId, messages),
     },
+    tools: fakeToolRegistry(state),
     ...overrides,
   };
   return { ctx, events };
@@ -46,7 +78,7 @@ describe("runPrompt", () => {
     const { ctx } = fakeCtx();
     const result = await runPrompt(
       ctx,
-      { id: "a", template: "hi {{name}}", providerId: "mock", modelId: "m", enableStateTools: false },
+      { id: "a", template: "hi {{name}}", providerId: "mock", modelId: "m", enableStateTools: false, enabledToolsets: [] },
       { name: "world" },
     );
     expect(result.renderedPrompt).toBe("hi world");
@@ -55,7 +87,11 @@ describe("runPrompt", () => {
 
   it("emits node_started, context_appended, then node_finished in order", async () => {
     const { ctx, events } = fakeCtx();
-    await runPrompt(ctx, { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: false }, {});
+    await runPrompt(
+      ctx,
+      { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: false, enabledToolsets: [] },
+      {},
+    );
     expect(events.map((e) => e.kind)).toEqual(["node_started", "context_appended", "node_finished"]);
   });
 
@@ -68,7 +104,11 @@ describe("runPrompt", () => {
       },
     });
     await expect(
-      runPrompt(ctx, { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: false }, {}),
+      runPrompt(
+        ctx,
+        { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: false, enabledToolsets: [] },
+        {},
+      ),
     ).rejects.toThrow("boom");
     expect(events.map((e) => e.kind)).toEqual(["node_started", "node_failed"]);
   });
@@ -98,7 +138,7 @@ describe("runPrompt", () => {
     };
     const result = await runPrompt(
       ctx,
-      { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: true },
+      { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: true, enabledToolsets: [] },
       {},
     );
     expect(calls).toEqual(['write:notes="hello"']);
@@ -107,7 +147,14 @@ describe("runPrompt", () => {
 
   it("accumulates its own conversation across repeated calls (e.g. a Loop body)", async () => {
     const { ctx } = fakeCtx();
-    const spec = { id: "a", template: "turn {{n}}", providerId: "mock", modelId: "m", enableStateTools: false };
+    const spec = {
+      id: "a",
+      template: "turn {{n}}",
+      providerId: "mock",
+      modelId: "m",
+      enableStateTools: false,
+      enabledToolsets: [],
+    };
     const first = await runPrompt(ctx, spec, { n: "1" });
     expect(first.renderedPrompt).toBe("turn 1"); // nothing accumulated yet on the first call
 
@@ -125,7 +172,16 @@ describe("runPrompt", () => {
     ctx.llmConfig.set({ temperature: 0.9 });
     await runPrompt(
       ctx,
-      { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: false, temperature: 0.1, topK: 10 },
+      {
+        id: "a",
+        template: "hi",
+        providerId: "mock",
+        modelId: "m",
+        enableStateTools: false,
+        enabledToolsets: [],
+        temperature: 0.1,
+        topK: 10,
+      },
       {},
     );
     expect(seen).toEqual({ temperature: 0.9, topK: 10 });
@@ -133,7 +189,14 @@ describe("runPrompt", () => {
 
   it("compacts via drop-oldest-half once the ambient threshold is crossed", async () => {
     const { ctx, events } = fakeCtx();
-    const spec = { id: "a", template: "{{n}}", providerId: "mock", modelId: "m", enableStateTools: false };
+    const spec = {
+      id: "a",
+      template: "{{n}}",
+      providerId: "mock",
+      modelId: "m",
+      enableStateTools: false,
+      enabledToolsets: [],
+    };
     ctx.context.append("a", [
       { role: "system", content: "keep me" },
       { role: "user", content: "x".repeat(400) },

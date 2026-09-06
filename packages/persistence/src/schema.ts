@@ -264,3 +264,14 @@ export const runEvents = sqliteTable(
   },
   (t) => [unique().on(t.executionId, t.seq)],
 );
+
+/** One row per plugin (e.g. "spotify"), holding whatever that plugin needs to authenticate —
+ *  typically a refresh token — as a single opaque encrypted blob. Generic across plugins rather
+ *  than a spotify-specific table: the shape inside secretEnc is the plugin's own business, this
+ *  table just gives every plugin the same encrypted-at-rest storage providers.secretEnc already
+ *  has. */
+export const pluginCredentials = sqliteTable("plugin_credentials", {
+  pluginId: text("plugin_id").primaryKey(),
+  secretEnc: text("secret_enc").notNull(),
+  updatedAt: text("updated_at").notNull().default(nowIso()),
+});

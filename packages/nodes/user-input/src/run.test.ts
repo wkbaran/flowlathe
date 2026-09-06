@@ -20,6 +20,7 @@ describe("runUserInput", () => {
       state: { read: () => undefined, write: () => undefined },
       llmConfig: { get: () => ({}), set: () => undefined },
       context: { get: () => [], append: () => undefined, replace: () => undefined },
+      tools: { specsFor: () => [], invoke: async () => "" },
     };
 
     const promise = runUserInput(ctx, { id: "u", prompt: "What's your name?" });

@@ -1,4 +1,4 @@
-import type { FlowGraph, PortSlot, Scheduler } from "@flowlathe/core";
+import type { FlowGraph, PortSlot, Scheduler, ToolRegistration } from "@flowlathe/core";
 import { GraphEngine, type EngineSnapshot } from "@flowlathe/interpreter";
 import {
   createBranch,
@@ -71,6 +71,7 @@ export interface StepOnceOptions {
   graph: FlowGraph;
   executionId: string;
   branchId: string;
+  pluginToolsets?: ToolRegistration[] | undefined;
 }
 
 export interface StepOutcome {
@@ -89,7 +90,7 @@ function latestSnapshot(db: Db, branchId: string) {
 /** Restores the branch's latest snapshot, dispatches exactly one ready activation, and — if
  *  the graph isn't already fully settled — persists the resulting snapshot as the new tip. */
 export async function stepOnce(opts: StepOnceOptions): Promise<StepOutcome> {
-  const { db, hub, scheduler, graph, executionId, branchId } = opts;
+  const { db, hub, scheduler, graph, executionId, branchId, pluginToolsets } = opts;
   const latest = latestSnapshot(db, branchId);
 
   const { run, resolveSuspended, emit } = buildHostAndRun({
@@ -100,6 +101,7 @@ export async function stepOnce(opts: StepOnceOptions): Promise<StepOutcome> {
     branchId,
     stateDecls: graph.state,
     stateReplay: listStateWritesForBranch(db, branchId),
+    pluginToolsets,
   });
   hub.registerResolver(executionId, resolveSuspended);
   try {

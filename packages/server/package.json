@@ -18,6 +18,7 @@
     "@flowlathe/core": "workspace:*",
     "@flowlathe/interpreter": "workspace:*",
     "@flowlathe/persistence": "workspace:*",
+    "@flowlathe/plugin-spotify": "workspace:*",
     "@flowlathe/providers": "workspace:*",
     "@flowlathe/runtime": "workspace:*",
     "@fastify/static": "10.1.3",

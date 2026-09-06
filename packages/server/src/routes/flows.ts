@@ -1,6 +1,6 @@
 import type { ProviderConfig } from "@flowlathe/compiler";
 import { compileGraph } from "@flowlathe/compiler";
-import { emptyFlowGraph, parseFlowGraph, type Scheduler } from "@flowlathe/core";
+import { emptyFlowGraph, parseFlowGraph, type Scheduler, type ToolRegistration } from "@flowlathe/core";
 import { createFlow, getFlow, listFlows, listProviders, saveFlowVersion } from "@flowlathe/persistence";
 import type { Db } from "@flowlathe/persistence";
 import type { FastifyInstance } from "fastify";
@@ -16,10 +16,11 @@ export interface FlowRouteDeps {
   db: Db;
   hub: ExecutionHub;
   scheduler: Scheduler;
+  pluginToolsets?: ToolRegistration[] | undefined;
 }
 
 export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): void {
-  const { db, hub, scheduler } = deps;
+  const { db, hub, scheduler, pluginToolsets } = deps;
 
   app.get("/api/flows", async () => listFlows(db));
 
@@ -58,7 +59,14 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
   app.post<{ Params: { id: string } }>("/api/flows/:id/run", async (request, reply) => {
     const flow = getFlow(db, request.params.id);
     if (!flow) return reply.code(404).send({ error: "flow not found" });
-    const { executionId, branchId } = runFlow({ db, hub, scheduler, flowVersionId: flow.flowVersionId, graph: flow.graph });
+    const { executionId, branchId } = runFlow({
+      db,
+      hub,
+      scheduler,
+      flowVersionId: flow.flowVersionId,
+      graph: flow.graph,
+      pluginToolsets,
+    });
     return reply.code(202).send({ executionId, branchId });
   });
 

@@ -6,20 +6,23 @@ import { InMemoryBlobStore } from "./memory-blob-store.js";
 import { createRun } from "./run.js";
 import { createStateStore } from "./state-store.js";
 import { createSuspendRegistry } from "./suspend-registry.js";
+import { createToolRegistry, stateToolset } from "./tool-registry.js";
 
 function testHost(): { host: RuntimeHost; events: RunEvent[] } {
   const events: RunEvent[] = [];
   const emit = (e: RunEvent): void => {
     events.push(e);
   };
+  const state = createStateStore(emit, { decls: [] });
   const host: RuntimeHost = {
     scheduler: { submit: async (req) => ({ content: `echo:${req.prompt}`, finishReason: "stop" }) },
     blobs: new InMemoryBlobStore(),
     emit,
     clock: { now: () => 0 },
-    state: createStateStore(emit, { decls: [] }),
+    state,
     llmConfig: createLlmConfigStore(),
     context: createContextStore(),
+    tools: createToolRegistry(stateToolset(state)),
     ...createSuspendRegistry(),
   };
   return { host, events };
@@ -30,7 +33,7 @@ describe("createRun", () => {
     const { host } = testHost();
     const rt = createRun({ host });
     const result = await rt.prompt(
-      { id: "a", template: "hi {{x}}", providerId: "p", modelId: "m", enableStateTools: false },
+      { id: "a", template: "hi {{x}}", providerId: "p", modelId: "m", enableStateTools: false, enabledToolsets: [] },
       { x: "y" },
     );
     expect(result.output).toBe("echo:hi y");

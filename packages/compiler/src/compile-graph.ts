@@ -1,5 +1,5 @@
 import type { FlowGraph, FlowNode } from "@flowlathe/core";
-import { emitTable } from "./emit-table.js";
+import { emitTable, schemaTable } from "./emit-table.js";
 import { topoLevels } from "./topo-levels.js";
 
 export type ProviderKind = "mock" | "ollama" | "openai-compat";
@@ -57,7 +57,10 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   const hasControlFlow = outerNodes.some((n) => n.type === "router" || n.type === "loop" || n.type === "map");
 
   const specEntries = graph.nodes
-    .map((node) => `  ${varName(node.id)}: ${JSON.stringify({ id: node.id, ...node.data })} as const,`)
+    .map((node) => {
+      const data = schemaTable[node.type].parse(node.data) as Record<string, unknown>;
+      return `  ${varName(node.id)}: ${JSON.stringify({ id: node.id, ...data })} as const,`;
+    })
     .join("\n");
 
   const statements = hasControlFlow

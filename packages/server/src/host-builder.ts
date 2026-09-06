@@ -18,7 +18,10 @@ import {
   createRun,
   createStateStore,
   createSuspendRegistry,
+  createToolRegistry,
+  stateToolset,
   type Run,
+  type ToolRegistration,
 } from "@flowlathe/runtime";
 import type { ExecutionHub } from "./execution-hub.js";
 
@@ -39,8 +42,11 @@ export function buildHostAndRun(opts: {
   /** Past writes on this branch to resume from — how step mode keeps state across `stepOnce`
    *  calls, each of which builds a fresh host (see CLAUDE.md for the branch-fork scope gap). */
   stateReplay?: { entry: string; value: unknown; seq: number }[];
+  /** Plugin-provided tools (e.g. Spotify), registered alongside the built-in "state" toolset —
+   *  see @flowlathe/plugin-spotify. Empty when no plugin is configured. */
+  pluginToolsets?: ToolRegistration[] | undefined;
 }): BuiltHost {
-  const { db, hub, scheduler, executionId, branchId, stateDecls, stateReplay } = opts;
+  const { db, hub, scheduler, executionId, branchId, stateDecls, stateReplay, pluginToolsets } = opts;
   const stepIdByNodeId = new Map<string, string>();
   const suspendRegistry = createSuspendRegistry();
 
@@ -107,14 +113,16 @@ export function buildHostAndRun(opts: {
     }
   };
 
+  const state = createStateStore(hostEmit, { decls: stateDecls, replay: stateReplay });
   const run = createRun({
     host: {
       scheduler,
       blobs: new SqliteBlobStore(db),
       clock: { now: () => Date.now() },
-      state: createStateStore(hostEmit, { decls: stateDecls, replay: stateReplay }),
+      state,
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
+      tools: createToolRegistry([...stateToolset(state), ...(pluginToolsets ?? [])]),
       ...suspendRegistry,
       emit: hostEmit,
     },

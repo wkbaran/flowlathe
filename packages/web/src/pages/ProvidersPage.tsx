@@ -22,13 +22,16 @@ import {
   createProvider,
   deleteModel,
   deleteProvider,
+  disconnectSpotify,
   getSchedulerStats,
+  getSpotifyStatus,
   listModels,
   listProviders,
   type ModelRecord,
   type ProviderKind,
   type ProviderRecord,
   type SchedulerStats,
+  type SpotifyPluginStatus,
 } from "../api.js";
 
 const KINDS: ProviderKind[] = ["mock", "ollama", "openai-compat"];
@@ -37,6 +40,7 @@ export function ProvidersPage() {
   const [providers, setProviders] = useState<ProviderRecord[]>([]);
   const [stats, setStats] = useState<Record<string, SchedulerStats>>({});
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelRecord[]>>({});
+  const [spotifyStatus, setSpotifyStatus] = useState<SpotifyPluginStatus>({ configured: false, connected: false });
 
   const [name, setName] = useState("");
   const [kind, setKind] = useState<ProviderKind>("openai-compat");
@@ -55,9 +59,15 @@ export function ProvidersPage() {
 
   useEffect(() => {
     void refresh();
+    void getSpotifyStatus().then(setSpotifyStatus);
     const interval = setInterval(() => void getSchedulerStats().then(setStats), 2000);
     return () => clearInterval(interval);
   }, []);
+
+  async function handleDisconnectSpotify() {
+    await disconnectSpotify();
+    setSpotifyStatus(await getSpotifyStatus());
+  }
 
   async function handleCreateProvider() {
     if (!name.trim()) return;
@@ -199,6 +209,35 @@ export function ProvidersPage() {
             </Paper>
           );
         })}
+
+        <Paper sx={{ p: 2 }} data-testid="plugin-spotify">
+          <Typography variant="subtitle1">Plugins</Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+            <Typography variant="body2" sx={{ flexGrow: 1 }}>
+              Spotify
+            </Typography>
+            {!spotifyStatus.configured && <Chip size="small" label="not configured" />}
+            {spotifyStatus.configured && spotifyStatus.connected && (
+              <Chip size="small" label="connected" color="success" />
+            )}
+            {spotifyStatus.configured && !spotifyStatus.connected && <Chip size="small" label="not connected" />}
+            {spotifyStatus.configured && !spotifyStatus.connected && (
+              <Button size="small" variant="contained" href="/api/plugins/spotify/oauth/start">
+                Connect
+              </Button>
+            )}
+            {spotifyStatus.configured && spotifyStatus.connected && (
+              <Button size="small" onClick={() => void handleDisconnectSpotify()}>
+                Disconnect
+              </Button>
+            )}
+          </Box>
+          {!spotifyStatus.configured && (
+            <Typography variant="caption" color="text.secondary">
+              Set SPOTIFY_CLIENT_ID (and optionally SPOTIFY_REDIRECT_URI) on the server to enable this plugin.
+            </Typography>
+          )}
+        </Paper>
       </Box>
     </div>
   );

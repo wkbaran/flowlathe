@@ -20,7 +20,8 @@
     "@flowlathe/node-pause": "workspace:*",
     "@flowlathe/node-prompt": "workspace:*",
     "@flowlathe/node-router": "workspace:*",
-    "@flowlathe/node-user-input": "workspace:*"
+    "@flowlathe/node-user-input": "workspace:*",
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "typescript": "5.9.3",

@@ -229,3 +229,16 @@ export function getStateLineage(executionId: string, branchId: string): Promise<
     json(res),
   );
 }
+
+export interface SpotifyPluginStatus {
+  configured: boolean;
+  connected: boolean;
+}
+
+export function getSpotifyStatus(): Promise<SpotifyPluginStatus> {
+  return fetch("/api/plugins/spotify/status").then((res) => json(res));
+}
+
+export function disconnectSpotify(): Promise<void> {
+  return fetch("/api/plugins/spotify/disconnect", { method: "POST" }).then(() => undefined);
+}

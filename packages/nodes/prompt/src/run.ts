@@ -1,12 +1,10 @@
 import {
   dropOldestHalf,
   estimateTokenCount,
-  READ_STATE_TOOL,
   renderContextText,
   renderTemplate,
   splitOldestHalf,
   thresholdTokens,
-  WRITE_STATE_TOOL,
   type ContextMessage,
   type PromptResult,
   type RuntimeHost,
@@ -34,7 +32,8 @@ export async function runPrompt(
     const priorContext = ctx.context.get(contextKey);
     const finalPrompt = priorContext.length > 0 ? `${renderContextText(priorContext)}\nuser: ${renderedPrompt}` : renderedPrompt;
 
-    const tools = spec.enableStateTools ? [READ_STATE_TOOL, WRITE_STATE_TOOL] : undefined;
+    const toolsets = [...(spec.enableStateTools ? ["state"] : []), ...spec.enabledToolsets];
+    const tools = toolsets.length > 0 ? ctx.tools.specsFor(toolsets) : undefined;
     let prompt = finalPrompt;
     let result;
     for (let round = 0; ; round++) {
@@ -52,7 +51,9 @@ export async function runPrompt(
       if (round >= MAX_TOOL_ROUNDS) {
         throw new Error(`prompt "${spec.id}" exceeded ${MAX_TOOL_ROUNDS} tool-call rounds without finishing`);
       }
-      const resultLines = result.toolCalls.map((call) => runBuiltinTool(ctx, spec.id, call));
+      const resultLines = await Promise.all(
+        result.toolCalls.map((call) => ctx.tools.invoke(call.name, call.args, { activationKey: spec.id })),
+      );
       prompt = `${prompt}\n[tool calls]\n${resultLines.join("\n")}\nContinue.`;
     }
 
@@ -115,18 +116,4 @@ async function maybeCompact(ctx: RuntimeHost, spec: PromptSpec, contextKey: stri
   }
   ctx.context.replace(contextKey, compacted);
   ctx.emit({ kind: "context_compacted", nodeId: spec.id, method: compactionMethod, beforeMessages: current, afterMessages: compacted });
-}
-
-function runBuiltinTool(ctx: RuntimeHost, nodeId: string, call: { name: string; args: Record<string, unknown> }): string {
-  if (call.name === "read_state") {
-    const entry = String(call.args["entry"]);
-    const value = ctx.state.read(entry, { viaTool: true, activationKey: nodeId });
-    return `[read_state ${entry}]: ${JSON.stringify(value)}`;
-  }
-  if (call.name === "write_state") {
-    const entry = String(call.args["entry"]);
-    ctx.state.write(entry, call.args["value"], { viaTool: true, activationKey: nodeId });
-    return `[write_state ${entry}]: ok`;
-  }
-  return `[${call.name}]: error - unknown tool`;
 }
