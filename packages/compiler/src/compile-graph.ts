@@ -87,7 +87,14 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   const stateDeclsLiteral = JSON.stringify(graph.state);
 
   return `import type { RunEvent } from "@flowlathe/core";
-import { createRun, createStateStore, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
+import {
+  createContextStore,
+  createLlmConfigStore,
+  createRun,
+  createStateStore,
+  createSuspendRegistry,
+  InMemoryBlobStore,
+} from "@flowlathe/runtime";
 import { SimpleScheduler${adapterImports.length ? `, ${adapterImports.join(", ")}` : ""} } from "@flowlathe/providers";
 
 const N = {
@@ -108,6 +115,8 @@ ${providerEntries}
       emit,
       clock: { now: () => Date.now() },
       state: createStateStore(emit, { decls: STATE_DECLS }),
+      llmConfig: createLlmConfigStore(),
+      context: createContextStore(),
       ...createSuspendRegistry(),
     },
   });
@@ -221,7 +230,7 @@ function emitLoopOrMap(
   // so per-iteration events/responses line up identically between interpreted and compiled runs.
   const scopedIdExpr = "`" + bodyNode.id + "@" + node.id + ":${i}`";
   return `  const ${varName(node.id)} = await rt.${combinator}(N.${varName(node.id)}, { ${ownBindings} }, async (${bodyParam}) => {
-    const bodyResult = await rt.${bodyMethod}({ ...N.${varName(bodyNode.id)}, id: ${scopedIdExpr} }, { ${bodyBindings} });
+    const bodyResult = await rt.${bodyMethod}({ ...N.${varName(bodyNode.id)}, id: ${scopedIdExpr}, contextNodeId: ${JSON.stringify(bodyNode.id)} }, { ${bodyBindings} });
     return bodyResult.output;
   });`;
 }

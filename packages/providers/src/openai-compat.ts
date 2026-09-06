@@ -37,6 +37,10 @@ export class OpenAiCompatAdapter implements ProviderAdapter {
         model: req.modelId,
         messages: [{ role: "user", content: req.prompt }],
         stream: true,
+        ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+        // Not a standard OpenAI param, but widely accepted by local OpenAI-compat servers
+        // (llama.cpp, vLLM) — harmless if the specific backend ignores it.
+        ...(req.topK !== undefined ? { top_k: req.topK } : {}),
       }),
       signal: req.signal ?? null,
     });

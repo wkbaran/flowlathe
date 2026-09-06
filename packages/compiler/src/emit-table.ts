@@ -1,5 +1,5 @@
 import type { NodeEmitter, NodeKind } from "@flowlathe/core";
-import { contextTransformEmitter } from "@flowlathe/node-context-transform";
+import { gateEmitter } from "@flowlathe/node-gate";
 import { loopEmitter } from "@flowlathe/node-loop";
 import { mapEmitter } from "@flowlathe/node-map";
 import { mergeEmitter } from "@flowlathe/node-merge";
@@ -16,5 +16,5 @@ export const emitTable: Record<NodeKind, NodeEmitter<any>> = {
   userInput: userInputEmitter,
   loop: loopEmitter,
   map: mapEmitter,
-  contextTransform: contextTransformEmitter,
+  gate: gateEmitter,
 };

@@ -1,6 +1,13 @@
 import type { FlowGraph, RunEvent } from "@flowlathe/core";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
-import { createRun, createStateStore, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
+import {
+  createContextStore,
+  createLlmConfigStore,
+  createRun,
+  createStateStore,
+  createSuspendRegistry,
+  InMemoryBlobStore,
+} from "@flowlathe/runtime";
 import { describe, expect, it } from "vitest";
 import { runGraph } from "./run-graph.js";
 
@@ -26,6 +33,8 @@ function makeRun(): { run: ReturnType<typeof createRun>; events: RunEvent[]; hos
       emit,
       clock: { now: () => 0 },
       state: createStateStore(emit, { decls: [] }),
+      llmConfig: createLlmConfigStore(),
+      context: createContextStore(),
       ...suspendRegistry,
     },
   });
@@ -66,7 +75,16 @@ function identityRun(): ReturnType<typeof createRun> {
     mock: { adapter: { kind: "identity", call: async (req: { prompt: string }) => ({ content: req.prompt, finishReason: "stop" }) }, maxParallel: 8 },
   });
   return createRun({
-    host: { scheduler, blobs: new InMemoryBlobStore(), emit: () => undefined, clock: { now: () => 0 }, state: noopState(), ...createSuspendRegistry() },
+    host: {
+      scheduler,
+      blobs: new InMemoryBlobStore(),
+      emit: () => undefined,
+      clock: { now: () => 0 },
+      state: noopState(),
+      llmConfig: createLlmConfigStore(),
+      context: createContextStore(),
+      ...createSuspendRegistry(),
+    },
   });
 }
 
@@ -156,6 +174,8 @@ describe("runGraph — fan-out concurrency", () => {
         emit: () => undefined,
         clock: { now: () => 0 },
         state: noopState(),
+        llmConfig: createLlmConfigStore(),
+        context: createContextStore(),
         ...createSuspendRegistry(),
       },
     });
@@ -223,11 +243,16 @@ describe("runGraph — loop", () => {
     };
     // the shared mock adapter prefixes "[mock:m] ", which would never converge on a numeric
     // stopValue -- use a custom incrementing adapter instead so the loop can actually terminate.
+    // Each call's own conversation memory prefixes prior turns onto the prompt, so pull out just
+    // the trailing number rather than assuming the whole prompt is numeric.
     const scheduler = new SimpleScheduler({
       mock: {
         adapter: {
           kind: "incrementer",
-          call: async (req: { prompt: string }) => ({ content: String(Number(req.prompt) + 1), finishReason: "stop" }),
+          call: async (req: { prompt: string }) => {
+            const match = req.prompt.match(/(\d+)\s*$/);
+            return { content: String(Number(match?.[1] ?? "0") + 1), finishReason: "stop" };
+          },
         },
         maxParallel: 8,
       },
@@ -239,11 +264,44 @@ describe("runGraph — loop", () => {
         emit: () => undefined,
         clock: { now: () => 0 },
         state: noopState(),
+        llmConfig: createLlmConfigStore(),
+        context: createContextStore(),
         ...createSuspendRegistry(),
       },
     });
     const { outputs } = await runGraph({ graph, run });
     expect(outputs["l"]).toBe("3");
+  });
+
+  it("a loop body's conversation memory accumulates by static node id, not its scoped activation key", async () => {
+    const contextStore = createContextStore();
+    const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
+    const runWithContext = createRun({
+      host: {
+        scheduler,
+        blobs: new InMemoryBlobStore(),
+        emit: () => undefined,
+        clock: { now: () => 0 },
+        state: noopState(),
+        llmConfig: createLlmConfigStore(),
+        context: contextStore,
+        ...createSuspendRegistry(),
+      },
+    });
+    const graph: FlowGraph = {
+      nodes: [
+        node("l", "loop", { initTemplate: "0", accPortName: "acc", stopValue: "STOP", maxIterations: 3 }),
+        node("body", "prompt", promptData("{{acc}}"), "l"),
+      ],
+      edges: [],
+      state: [],
+    };
+    // stopValue is unreachable (the mock always prefixes "[mock:m] "), so the loop runs all 3
+    // iterations and then raises -- exactly what exercises 3 body dispatches for this assertion.
+    await expect(runGraph({ graph, run: runWithContext })).rejects.toThrow(/maxIterations/);
+    // 3 iterations x 2 turns (user+assistant) each, all under the one static "body" key
+    expect(contextStore.get("body")).toHaveLength(6);
+    expect(contextStore.get("body@l:0")).toEqual([]);
   });
 
   it("raises when it never reaches stopValue within maxIterations", async () => {

@@ -1,5 +1,7 @@
 import type { RunEvent, RuntimeHost } from "@flowlathe/core";
 import { describe, expect, it } from "vitest";
+import { createContextStore } from "./context-store.js";
+import { createLlmConfigStore } from "./llm-config-store.js";
 import { InMemoryBlobStore } from "./memory-blob-store.js";
 import { createRun } from "./run.js";
 import { createStateStore } from "./state-store.js";
@@ -16,6 +18,8 @@ function testHost(): { host: RuntimeHost; events: RunEvent[] } {
     emit,
     clock: { now: () => 0 },
     state: createStateStore(emit, { decls: [] }),
+    llmConfig: createLlmConfigStore(),
+    context: createContextStore(),
     ...createSuspendRegistry(),
   };
   return { host, events };

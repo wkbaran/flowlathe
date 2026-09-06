@@ -22,6 +22,13 @@ function toOllamaTool(tool: ToolSpec): unknown {
   return { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } };
 }
 
+function toOllamaOptions(req: ProviderCallRequest): Record<string, number> | undefined {
+  const options: Record<string, number> = {};
+  if (req.temperature !== undefined) options["temperature"] = req.temperature;
+  if (req.topK !== undefined) options["top_k"] = req.topK;
+  return Object.keys(options).length > 0 ? options : undefined;
+}
+
 export interface OllamaProviderAdapterOptions {
   baseUrl: string;
 }
@@ -39,7 +46,7 @@ export class OllamaProviderAdapter implements ProviderAdapter {
     const res = await fetch(`${this.baseUrl}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: req.modelId, prompt: req.prompt, stream: true }),
+      body: JSON.stringify({ model: req.modelId, prompt: req.prompt, stream: true, options: toOllamaOptions(req) }),
       signal: req.signal ?? null,
     });
     if (!res.ok || !res.body) {
@@ -92,6 +99,7 @@ export class OllamaProviderAdapter implements ProviderAdapter {
         messages: [{ role: "user", content: req.prompt }],
         tools: tools.map(toOllamaTool),
         stream: true,
+        options: toOllamaOptions(req),
       }),
       signal: req.signal ?? null,
     });

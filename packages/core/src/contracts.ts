@@ -1,5 +1,5 @@
 import type { SuspendReason } from "./activation.js";
-import type { ContextMessage, ContextTransformKind } from "./context.js";
+import type { CompactionMethod, ContextMessage, ContextStore, LlmConfigStore } from "./context.js";
 import type { MergeRule, StateStore } from "./state.js";
 
 /** JSON-schema-shaped, loosely typed — just enough for the two providers we implement to
@@ -25,6 +25,8 @@ export interface ProviderCallRequest {
   modelId: string;
   nodeId: string;
   prompt: string;
+  temperature?: number | undefined;
+  topK?: number | undefined;
   tools?: ToolSpec[] | undefined;
   signal?: AbortSignal | undefined;
   onToken?: ((token: string) => void) | undefined;
@@ -72,15 +74,15 @@ export type RunEvent =
       activationKey?: string | undefined;
     }
   | { kind: "state_read"; entry: string; seqSeen: number; viaTool: boolean; activationKey?: string | undefined }
+  | { kind: "context_appended"; nodeId: string; messageCount: number }
   | {
-      kind: "context_transform";
+      kind: "context_compacted";
       nodeId: string;
-      transformKind: ContextTransformKind;
-      sourceMessages: ContextMessage[];
-      resultMessages: ContextMessage[];
-      providerId?: string | undefined;
-      modelId?: string | undefined;
+      method: CompactionMethod;
+      beforeMessages: ContextMessage[];
+      afterMessages: ContextMessage[];
     }
+  | { kind: "llm_config_set"; nodeId: string; patch: Record<string, unknown> }
   | { kind: "run_finished"; outputs: Record<string, unknown> }
   | { kind: "run_failed"; error: string };
 
@@ -102,6 +104,8 @@ export interface RuntimeHost {
   suspend(key: string, reason: SuspendReason): Promise<string>;
   resolveSuspended(key: string, value: string): void;
   state: StateStore;
+  llmConfig: LlmConfigStore;
+  context: ContextStore;
 }
 
 export interface PromptResult {

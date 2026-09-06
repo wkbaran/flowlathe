@@ -4,7 +4,7 @@ import {
   beginStep,
   type Db,
   finishStep,
-  recordContextTransform,
+  recordContextCompaction,
   recordFailedResponse,
   recordResponse,
   recordStateRead,
@@ -12,7 +12,14 @@ import {
   setExecutionStatus,
   SqliteBlobStore,
 } from "@flowlathe/persistence";
-import { createRun, createStateStore, createSuspendRegistry, type Run } from "@flowlathe/runtime";
+import {
+  createContextStore,
+  createLlmConfigStore,
+  createRun,
+  createStateStore,
+  createSuspendRegistry,
+  type Run,
+} from "@flowlathe/runtime";
 import type { ExecutionHub } from "./execution-hub.js";
 
 export interface BuiltHost {
@@ -89,14 +96,13 @@ export function buildHostAndRun(opts: {
         entry: event.entry,
         seqSeen: event.seqSeen,
       });
-    } else if (event.kind === "context_transform") {
-      recordContextTransform(db, {
+    } else if (event.kind === "context_compacted") {
+      recordContextCompaction(db, {
         executionId,
-        transformKind: event.transformKind,
-        sourceMessages: event.sourceMessages,
-        resultMessages: event.resultMessages,
-        providerId: event.providerId,
-        modelId: event.modelId,
+        nodeId: event.nodeId,
+        method: event.method,
+        sourceMessages: event.beforeMessages,
+        resultMessages: event.afterMessages,
       });
     }
   };
@@ -107,6 +113,8 @@ export function buildHostAndRun(opts: {
       blobs: new SqliteBlobStore(db),
       clock: { now: () => Date.now() },
       state: createStateStore(hostEmit, { decls: stateDecls, replay: stateReplay }),
+      llmConfig: createLlmConfigStore(),
+      context: createContextStore(),
       ...suspendRegistry,
       emit: hostEmit,
     },

@@ -62,7 +62,7 @@ describe("compileGraph — map", () => {
     const script = compileGraph(graph, { providers });
     expect(script).toContain("const n_m = await rt.map(N.n_m, {  }, async (item, i) => {");
     expect(script).toContain(
-      "const bodyResult = await rt.prompt({ ...N.n_body, id: `body@m:${i}` }, { item: item });",
+      'const bodyResult = await rt.prompt({ ...N.n_body, id: `body@m:${i}`, contextNodeId: "body" }, { item: item });',
     );
     expect(script).toContain("return bodyResult.output;");
     // the body node's own spec must still be emitted into N, even though it's excluded from the outer walk

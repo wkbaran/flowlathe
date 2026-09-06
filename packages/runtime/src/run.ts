@@ -1,5 +1,12 @@
-import { renderTemplate, type PromptResult, type RuntimeHost, type StateStore } from "@flowlathe/core";
-import { type ContextTransformResult, type ContextTransformSpec, runContextTransform } from "@flowlathe/node-context-transform";
+import {
+  renderTemplate,
+  type ContextStore,
+  type LlmConfigStore,
+  type PromptResult,
+  type RuntimeHost,
+  type StateStore,
+} from "@flowlathe/core";
+import { type GateResult, type GateSpec, runGate } from "@flowlathe/node-gate";
 import { type LoopSpec } from "@flowlathe/node-loop";
 import { type MapSpec } from "@flowlathe/node-map";
 import { type MergeResult, type MergeSpec, runMerge } from "@flowlathe/node-merge";
@@ -11,12 +18,14 @@ import { loopUntil, mapConcurrent } from "./combinators.js";
 
 export interface Run {
   readonly state: StateStore;
+  readonly llmConfig: LlmConfigStore;
+  readonly context: ContextStore;
   prompt(spec: PromptSpec, inputs: Record<string, string>): Promise<PromptResult>;
   route(spec: RouterSpec, inputs: Record<string, string>): Promise<RouterResult>;
   merge(spec: MergeSpec, inputs: Record<string, string | undefined>): Promise<MergeResult>;
   pause(spec: PauseSpec, inputs: Record<string, string>): Promise<PauseResult>;
   userInput(spec: UserInputSpec): Promise<UserInputResult>;
-  contextTransform(spec: ContextTransformSpec, inputs: Record<string, string>): Promise<ContextTransformResult>;
+  gate(spec: GateSpec, inputs: Record<string, string>): Promise<GateResult>;
   loop(
     spec: LoopSpec,
     inputs: Record<string, string>,
@@ -35,12 +44,14 @@ export function createRun(opts: CreateRunOptions): Run {
   const host = opts.host;
   return {
     state: host.state,
+    llmConfig: host.llmConfig,
+    context: host.context,
     prompt: (spec, inputs) => runPrompt(host, spec, inputs),
     route: (spec, inputs) => runRouter(host, spec, inputs),
     merge: (spec, inputs) => runMerge(host, spec, inputs),
     pause: (spec, inputs) => runPause(host, spec, inputs),
     userInput: (spec) => runUserInput(host, spec),
-    contextTransform: (spec, inputs) => runContextTransform(host, spec, inputs),
+    gate: (spec, inputs) => runGate(host, spec, inputs),
 
     loop: async (spec, inputs, body) => {
       const init = renderTemplate(spec.initTemplate, inputs);

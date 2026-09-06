@@ -26,69 +26,61 @@ test("state: a prompt's write_state tool call updates the flow's shared state st
   await expect(page.locator('[data-testid="state-decl-list"]')).toContainText('current: ["hello"]');
 });
 
-test("context transforms: append -> filter-role chains into a prompt's flat-text template", async ({ page }) => {
+test("gate: overrides ambient LLM settings for every node wired downstream of it", async ({ page }) => {
   await page.goto("/");
-  await page.getByLabel("New flow name").fill("Context Chain");
+  await page.getByLabel("New flow name").fill("Gated Settings");
   await page.getByRole("button", { name: "New Flow" }).click();
   await expect(page).toHaveURL(/\/flows\/.+/);
 
   const kindSelect = page.getByRole("combobox", { name: "New node kind" });
   const addButton = page.getByRole("button", { name: "Add Node" });
+  const templateField = page.getByRole("textbox", { name: "Template" });
 
-  // node-1: contextTransform, starts a new context with a system message
+  // node-1: prompt (seed)
+  await addButton.click();
+  const seed = page.getByTestId("node-node-1");
+  await seed.click();
+  await expect(templateField).toHaveValue("");
+  await templateField.fill("hello");
+  await expect(templateField).toHaveValue("hello");
+
+  // node-2: gate
   await kindSelect.click();
-  await page.getByRole("option", { name: "contextTransform" }).click();
+  await page.getByRole("option", { name: "gate", exact: true }).click();
   await addButton.click();
+  const gate = page.getByTestId("node-node-2");
+  await gate.click();
+  const temperatureField = page.getByRole("spinbutton", { name: "Temperature" });
+  // .fill() on a React-controlled type="number" input is flaky under fast, no-delay automation
+  // (the value tracker misses the change) -- type it out character-by-character instead.
+  await temperatureField.pressSequentially("0.5");
+  await expect(temperatureField).toHaveValue("0.5");
 
-  // node-2: contextTransform, appends a user message onto node-1's context
-  await addButton.click();
-
-  // node-3: prompt, renders the final context as flat text
+  // node-3: prompt (reply)
   await kindSelect.click();
   await page.getByRole("option", { name: "prompt", exact: true }).click();
   await addButton.click();
-
-  const seed = page.getByTestId("node-node-1");
-  const addUser = page.getByTestId("node-node-2");
   const reply = page.getByTestId("node-node-3");
-  const appendTemplateField = page.getByRole("textbox", { name: "Append template" });
-
-  await seed.click();
-  await expect(appendTemplateField).toHaveValue("");
-  await page.getByRole("checkbox", { name: "Starts a new context" }).check();
-  await appendTemplateField.fill("sys prompt");
-  await expect(appendTemplateField).toHaveValue("sys prompt");
-  await page.getByRole("combobox", { name: "Append role" }).click();
-  await page.getByRole("option", { name: "system" }).click();
-
-  await addUser.click();
-  await expect(appendTemplateField).toHaveValue("");
-  await appendTemplateField.fill("hi there");
-  await expect(appendTemplateField).toHaveValue("hi there");
-  await page.getByRole("combobox", { name: "Append role" }).click();
-  await page.getByRole("option", { name: "user" }).click();
-
   await reply.click();
-  const templateField = page.getByRole("textbox", { name: "Template" });
   await expect(templateField).toHaveValue("");
   await templateField.fill("{{input}}");
   await expect(templateField).toHaveValue("{{input}}");
 
-  // wire node-1's "context" output -> node-2's "context" input, and node-2's "output" -> node-3's "ctx"
-  const seedContextOut = seed.locator('.react-flow__handle-right[data-handleid="context"]');
-  const addUserContextIn = addUser.locator('.react-flow__handle-left[data-handleid="context"]');
-  await dragBetween(page, seedContextOut, addUserContextIn);
+  // Nodes land further apart than one screen's width by the time all 3 exist (default spacing is
+  // generous enough that the diamond Gate never overlaps its neighbors) -- fit the whole graph
+  // into view first, or a node past the fold gets an off-screen boundingBox and the drag misses.
+  await page.getByRole("button", { name: "Fit View" }).click();
 
-  const addUserOutputOut = addUser.locator('.react-flow__handle-right[data-handleid="output"]');
-  const replyIn = reply.locator(".react-flow__handle-left");
-  await dragBetween(page, addUserOutputOut, replyIn);
+  // wire seed -> gate -> reply, all via each node's single "input"/"output" handle
+  await dragBetween(page, seed.locator(".react-flow__handle-right"), gate.locator(".react-flow__handle-left"));
+  await dragBetween(page, gate.locator(".react-flow__handle-right"), reply.locator(".react-flow__handle-left"));
 
   await page.getByRole("button", { name: "Run" }).click();
   await expect(reply).toHaveAttribute("data-status", "done", { timeout: 10_000 });
 
-  await expect(page.getByTestId("execution-log")).toContainText(
-    "node-3: finished -> [mock:mock] system: sys prompt\nuser: hi there",
-  );
+  const log = page.getByTestId("execution-log");
+  await expect(log).toContainText('node-2: gate set {"temperature":0.5}');
+  await expect(log).toContainText("node-3: finished -> [mock:mock] [mock:mock] hello");
 });
 
 async function dragBetween(

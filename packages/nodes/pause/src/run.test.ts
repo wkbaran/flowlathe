@@ -18,6 +18,8 @@ describe("runPause", () => {
         }),
       resolveSuspended: () => undefined,
       state: { read: () => undefined, write: () => undefined },
+      llmConfig: { get: () => ({}), set: () => undefined },
+      context: { get: () => [], append: () => undefined, replace: () => undefined },
     };
 
     const promise = runPause(ctx, { id: "p", message: "hold on" }, { input: "carried-value" });

@@ -1,5 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { type OpenedDb, ensureDefaultMockProvider, getBlob, openDb, runMigrations } from "@flowlathe/persistence";
+import {
+  type OpenedDb,
+  ensureDefaultMockProvider,
+  listRunEventsSince,
+  openDb,
+  runMigrations,
+} from "@flowlathe/persistence";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { SchedulerRegistry } from "./scheduler-registry.js";
@@ -164,33 +170,35 @@ describe("state", () => {
   });
 });
 
-describe("context transforms", () => {
-  it("chains append -> filter-role, then a prompt renders the result as flat text", async () => {
-    const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Ctx" } })).json();
+describe("gate + automatic context accumulation", () => {
+  it("a gate's compaction settings apply once a map body's own context crosses the threshold", async () => {
+    const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Gated" } })).json();
     const graph = {
       nodes: [
+        { id: "seed", type: "prompt", position: { x: 0, y: 0 }, data: { template: "seed", providerId: "mock", modelId: "m" } },
         {
-          id: "seed",
-          type: "contextTransform",
-          position: { x: 0, y: 0 },
-          data: { transformKind: "append", startsNewContext: true, appendRole: "system", appendTemplate: "sys prompt" },
-        },
-        {
-          id: "addUser",
-          type: "contextTransform",
+          id: "g",
+          type: "gate",
           position: { x: 1, y: 0 },
-          data: { transformKind: "append", appendRole: "user", appendTemplate: "hi there" },
+          data: { compactionMethod: "drop-oldest-half", compactionThreshold: { kind: "fixed", tokens: 1 } },
         },
         {
-          id: "reply",
-          type: "prompt",
+          id: "m",
+          type: "map",
           position: { x: 2, y: 0 },
-          data: { template: "{{ctx}}", providerId: "mock", modelId: "m" },
+          data: { itemsTemplate: '["{{marker}}","b"]', itemPortName: "item", maxConcurrency: 1, maxItems: 10 },
+        },
+        {
+          id: "body",
+          type: "prompt",
+          position: { x: 3, y: 0 },
+          data: { template: "{{item}}", providerId: "mock", modelId: "m" },
+          parentId: "m",
         },
       ],
       edges: [
-        { id: "e1", source: "seed", target: "addUser", sourceHandle: "context", targetHandle: "context" },
-        { id: "e2", source: "addUser", target: "reply", sourceHandle: "output", targetHandle: "ctx" },
+        { id: "e1", source: "seed", target: "g", targetHandle: "input" },
+        { id: "e2", source: "g", target: "m", targetHandle: "marker" },
       ],
       state: [],
     };
@@ -200,11 +208,20 @@ describe("context transforms", () => {
     const { executionId } = started.json();
     await waitForFinished(executionId);
 
-    const log = (await app.inject({ method: "GET", url: `/api/executions/${executionId}` })).json();
-    const reply = log.responses.find((r: { nodeId: string }) => r.nodeId === "reply");
-    const content = getBlob(opened.db, reply.contentSha)!.toString("utf-8");
-    expect(content).toContain("system: sys prompt");
-    expect(content).toContain("user: hi there");
+    const events = listRunEventsSince(opened.db, executionId, 0).map((row) => row.payload as { kind: string });
+
+    expect(events.some((e) => e.kind === "llm_config_set")).toBe(true);
+    const compaction = events.find((e) => e.kind === "context_compacted") as
+      | { method: string; beforeMessages: unknown[]; afterMessages: unknown[] }
+      | undefined;
+    expect(compaction).toBeTruthy();
+    expect(compaction!.method).toBe("drop-oldest-half");
+    expect(compaction!.beforeMessages.length).toBeGreaterThan(compaction!.afterMessages.length);
+
+    const appendedForBody = events.filter(
+      (e) => e.kind === "context_appended" && (e as unknown as { nodeId: string }).nodeId.startsWith("body@m:"),
+    );
+    expect(appendedForBody.length).toBe(2); // one per map iteration, same underlying "body" node
   });
 });
 

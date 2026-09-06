@@ -128,8 +128,11 @@ export class GraphEngine {
     return outputs;
   }
 
+  /** Nodes neither settled nor currently in flight — excluding `running` matters once a node's
+   *  dispatch spans more than one microtask (e.g. any `await`), or `runToCompletion`'s loop can
+   *  re-admit the same node a second time before its first dispatch finishes. */
   private remaining(): string[] {
-    return [...this.nodesById.keys()].filter((id) => !this.outputs.has(id));
+    return [...this.nodesById.keys()].filter((id) => !this.outputs.has(id) && !this.running.has(id));
   }
 
   private admit(nodeId: string): Promise<void> {
@@ -233,7 +236,9 @@ export class GraphEngine {
     const runBody = async (injected: Record<string, string>, index: number): Promise<string> => {
       const key = activationKey(bodyNode.id, [{ loop: node.id, index }]);
       const bodyData = bodyDescriptor.schema.parse(bodyNode.data) as Record<string, unknown>;
-      const bodySpec = { id: key, ...bodyData };
+      // contextNodeId keeps a prompt body's conversation memory keyed by the static node, not
+      // this iteration's scoped activation key — see CLAUDE.md.
+      const bodySpec = { id: key, contextNodeId: bodyNode.id, ...bodyData };
       const result = await bodyDescriptor.dispatch!(this.run, bodySpec, injected);
       return firstOutputValue(bodyNode.type, bodySpec, result);
     };

@@ -1,6 +1,6 @@
 import { emptyFlowGraph } from "@flowlathe/core";
 import { beforeEach, describe, expect, it } from "vitest";
-import { recordContextTransform } from "./contexts.js";
+import { recordContextCompaction } from "./contexts.js";
 import { type OpenedDb, openDb } from "./db.js";
 import { startExecution } from "./executions.js";
 import { createFlow } from "./flows.js";
@@ -16,32 +16,34 @@ beforeEach(() => {
   executionId = startExecution(opened.db, flow.flowVersionId).executionId;
 });
 
-describe("context transform lineage", () => {
+describe("context compaction lineage", () => {
   it("materializes source and result contexts as content-addressed message lists", () => {
-    const recorded = recordContextTransform(opened.db, {
+    const recorded = recordContextCompaction(opened.db, {
       executionId,
-      transformKind: "drop-before",
+      nodeId: "a",
+      method: "drop-oldest-half",
       sourceMessages: [
         { role: "system", content: "sys" },
         { role: "user", content: "hi" },
         { role: "assistant", content: "hello" },
       ],
-      resultMessages: [{ role: "assistant", content: "hello" }],
+      resultMessages: [
+        { role: "system", content: "sys" },
+        { role: "assistant", content: "hello" },
+      ],
     });
     expect(recorded.sourceContextId).not.toBe(recorded.resultContextId);
     expect(recorded.transformCallId).toBeTruthy();
   });
 
-  it("keeps provider/model info in paramsJson without requiring a models table row", () => {
-    // no FK violation even though "mock"/"m" aren't real `models.id` rows
+  it("records which node's compaction this was without requiring a models table row", () => {
     expect(() =>
-      recordContextTransform(opened.db, {
+      recordContextCompaction(opened.db, {
         executionId,
-        transformKind: "summarize",
+        nodeId: "a",
+        method: "summarize-oldest-half",
         sourceMessages: [{ role: "user", content: "long transcript" }],
         resultMessages: [{ role: "system", content: "summary" }],
-        providerId: "mock",
-        modelId: "m",
       }),
     ).not.toThrow();
   });

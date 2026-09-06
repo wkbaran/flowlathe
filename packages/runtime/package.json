@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@flowlathe/core": "workspace:*",
-    "@flowlathe/node-context-transform": "workspace:*",
+    "@flowlathe/node-gate": "workspace:*",
     "@flowlathe/node-loop": "workspace:*",
     "@flowlathe/node-map": "workspace:*",
     "@flowlathe/node-merge": "workspace:*",

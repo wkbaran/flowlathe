@@ -1,6 +1,13 @@
 import type { FlowGraph } from "@flowlathe/core";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
-import { createRun, createStateStore, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
+import {
+  createContextStore,
+  createLlmConfigStore,
+  createRun,
+  createStateStore,
+  createSuspendRegistry,
+  InMemoryBlobStore,
+} from "@flowlathe/runtime";
 import { describe, expect, it } from "vitest";
 import { GraphEngine } from "./run-graph.js";
 
@@ -19,6 +26,8 @@ function makeRun(): ReturnType<typeof createRun> {
       emit: () => undefined,
       clock: { now: () => 0 },
       state: createStateStore(() => undefined, { decls: [] }),
+      llmConfig: createLlmConfigStore(),
+      context: createContextStore(),
       ...createSuspendRegistry(),
     },
   });

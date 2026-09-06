@@ -89,7 +89,7 @@ const NODE_KIND_OPTIONS: NodeKind[] = [
   "userInput",
   "loop",
   "map",
-  "contextTransform",
+  "gate",
 ];
 
 function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
@@ -108,8 +108,8 @@ function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
       return { label: id, initTemplate: "0", accPortName: "acc", stopValue: "done", maxIterations: 5 };
     case "map":
       return { label: id, itemsTemplate: '["a","b","c"]', itemPortName: "item", maxConcurrency: 3, maxItems: 10 };
-    case "contextTransform":
-      return { label: id, transformKind: "append", startsNewContext: false, appendRole: "user", appendTemplate: "" };
+    case "gate":
+      return { label: id };
   }
 }
 
@@ -175,7 +175,9 @@ export function Canvas() {
       {
         id,
         type: newNodeKind,
-        position: { x: 80 + ns.length * 60, y: 80 + ns.length * 40 },
+        // wide enough that even the largest node (the diamond Gate) never lands overlapping
+        // the previous one
+        position: { x: 80 + ns.length * 260, y: 80 + ns.length * 40 },
         data: defaultDataFor(newNodeKind, id),
       } as Node,
     ]);
@@ -269,7 +271,9 @@ export function Canvas() {
       "node_suspended",
       "state_write",
       "state_read",
-      "context_transform",
+      "context_appended",
+      "context_compacted",
+      "llm_config_set",
       "run_finished",
       "run_failed",
     ] as const) {
@@ -674,6 +678,21 @@ function NodeProperties(props: {
             }
             label="Enable read_state/write_state tool"
           />
+          <TextField
+            size="small"
+            type="number"
+            label="Temperature (default)"
+            slotProps={{ htmlInput: { step: 0.1, min: 0, max: 2 } }}
+            value={(data["temperature"] as number | undefined) ?? ""}
+            onChange={(e) => onChange({ temperature: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
+          <TextField
+            size="small"
+            type="number"
+            label="Top K (default)"
+            value={(data["topK"] as number | undefined) ?? ""}
+            onChange={(e) => onChange({ topK: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
         </>
       )}
 
@@ -793,119 +812,100 @@ function NodeProperties(props: {
         </>
       )}
 
-      {type === "contextTransform" && (
+      {type === "gate" && (
         <>
+          <Typography variant="caption" color="text.secondary">
+            Overrides ambient LLM settings for every node downstream, from the moment execution
+            passes through this gate. Leave a field blank to not touch it.
+          </Typography>
+          <TextField
+            size="small"
+            type="number"
+            label="Temperature"
+            slotProps={{ htmlInput: { step: 0.1, min: 0, max: 2 } }}
+            value={(data["temperature"] as number | undefined) ?? ""}
+            onChange={(e) => onChange({ temperature: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
+          <TextField
+            size="small"
+            type="number"
+            label="Top K"
+            value={(data["topK"] as number | undefined) ?? ""}
+            onChange={(e) => onChange({ topK: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
           <Select
             size="small"
-            value={(data["transformKind"] as string) ?? "append"}
-            onChange={(e) => onChange({ transformKind: e.target.value })}
-            inputProps={{ "aria-label": "Transform kind" }}
+            displayEmpty
+            value={(data["compactionMethod"] as string) ?? ""}
+            onChange={(e) => onChange({ compactionMethod: e.target.value || undefined })}
+            inputProps={{ "aria-label": "Compaction method" }}
           >
-            <MenuItem value="append">append</MenuItem>
-            <MenuItem value="drop-before">drop-before</MenuItem>
-            <MenuItem value="filter-role">filter-role</MenuItem>
-            <MenuItem value="summarize">summarize</MenuItem>
+            <MenuItem value="">(no compaction)</MenuItem>
+            <MenuItem value="drop-oldest-half">drop-oldest-half</MenuItem>
+            <MenuItem value="summarize-oldest-half">summarize-oldest-half</MenuItem>
           </Select>
-          <FormControlLabel
-            control={
-              <Checkbox
-                size="small"
-                checked={(data["startsNewContext"] as boolean) ?? false}
-                onChange={(e) => onChange({ startsNewContext: e.target.checked })}
-              />
-            }
-            label="Starts a new context (no incoming context edge)"
-          />
 
-          {data["transformKind"] === "append" && (
+          {data["compactionMethod"] && (
             <>
               <Select
                 size="small"
-                value={(data["appendRole"] as string) ?? "user"}
-                onChange={(e) => onChange({ appendRole: e.target.value })}
-                inputProps={{ "aria-label": "Append role" }}
+                value={(data["compactionThreshold"] as { kind?: string } | undefined)?.kind ?? "fixed"}
+                onChange={(e) =>
+                  onChange({
+                    compactionThreshold:
+                      e.target.value === "fixed" ? { kind: "fixed", tokens: 4000 } : { kind: "percentage", percent: 80, contextWindowTokens: 8192 },
+                  })
+                }
+                inputProps={{ "aria-label": "Threshold kind" }}
               >
-                {["system", "user", "assistant", "thinking", "tool"].map((role) => (
-                  <MenuItem key={role} value={role}>
-                    {role}
-                  </MenuItem>
-                ))}
+                <MenuItem value="fixed">fixed token count</MenuItem>
+                <MenuItem value="percentage">percentage of context window</MenuItem>
               </Select>
-              <TextField
-                size="small"
-                label="Append template"
-                multiline
-                minRows={2}
-                value={(data["appendTemplate"] as string) ?? ""}
-                onChange={(e) => onChange({ appendTemplate: e.target.value })}
-              />
-            </>
-          )}
 
-          {data["transformKind"] === "drop-before" && (
-            <TextField
-              size="small"
-              type="number"
-              label="Keep from index"
-              value={(data["keepFromIndex"] as number) ?? 0}
-              onChange={(e) => onChange({ keepFromIndex: Number(e.target.value) })}
-            />
-          )}
-
-          {data["transformKind"] === "filter-role" && (
-            <TextField
-              size="small"
-              label="Exclude roles (comma-separated)"
-              value={((data["excludeRoles"] as string[]) ?? []).join(",")}
-              onChange={(e) =>
-                onChange({ excludeRoles: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })
-              }
-            />
-          )}
-
-          {data["transformKind"] === "summarize" && (
-            <>
-              <TextField
-                size="small"
-                type="number"
-                label="Summarize before index"
-                value={(data["summarizeBeforeIndex"] as number) ?? 0}
-                onChange={(e) => onChange({ summarizeBeforeIndex: Number(e.target.value) })}
-              />
-              <TextField
-                size="small"
-                label="Summarize prompt template"
-                multiline
-                minRows={2}
-                value={(data["summarizeTemplate"] as string) ?? ""}
-                onChange={(e) => onChange({ summarizeTemplate: e.target.value })}
-              />
-              <Select
-                size="small"
-                displayEmpty
-                value={(data["providerId"] as string) ?? ""}
-                onChange={(e) => onChange({ providerId: e.target.value, modelId: "" })}
-                inputProps={{ "aria-label": "Summarize provider" }}
-              >
-                {providers.map((p) => (
-                  <MenuItem key={p.id} value={p.id}>
-                    {p.name}
-                  </MenuItem>
-                ))}
-              </Select>
-              <Select
-                size="small"
-                displayEmpty
-                value={(data["modelId"] as string) ?? ""}
-                onChange={(e) => onChange({ modelId: e.target.value })}
-                inputProps={{ "aria-label": "Summarize model" }}
-              >
-                {(modelsByProvider[data["providerId"] as string] ?? []).map((m) => (
-                  <MenuItem key={m.id} value={m.modelName}>
-                    {m.modelName}
-                  </MenuItem>
-                ))}
-              </Select>
+              {(data["compactionThreshold"] as { kind?: string } | undefined)?.kind === "percentage" ? (
+                <>
+                  <TextField
+                    size="small"
+                    type="number"
+                    label="Threshold %"
+                    value={(data["compactionThreshold"] as { percent?: number })?.percent ?? 80}
+                    onChange={(e) =>
+                      onChange({
+                        compactionThreshold: {
+                          ...(data["compactionThreshold"] as object),
+                          kind: "percentage",
+                          percent: Number(e.target.value),
+                        },
+                      })
+                    }
+                  />
+                  <TextField
+                    size="small"
+                    type="number"
+                    label="Model context window (tokens)"
+                    value={(data["compactionThreshold"] as { contextWindowTokens?: number })?.contextWindowTokens ?? 8192}
+                    onChange={(e) =>
+                      onChange({
+                        compactionThreshold: {
+                          ...(data["compactionThreshold"] as object),
+                          kind: "percentage",
+                          contextWindowTokens: Number(e.target.value),
+                        },
+                      })
+                    }
+                  />
+                </>
+              ) : (
+                <TextField
+                  size="small"
+                  type="number"
+                  label="Threshold (tokens)"
+                  value={(data["compactionThreshold"] as { tokens?: number })?.tokens ?? 4000}
+                  onChange={(e) =>
+                    onChange({ compactionThreshold: { kind: "fixed", tokens: Number(e.target.value) } })
+                  }
+                />
+              )}
             </>
           )}
         </>
@@ -948,8 +948,12 @@ function describeEvent(event: RunEvent): string {
       return `state[${event.entry}] <- ${JSON.stringify(event.value)} (${event.merge}${event.viaTool ? ", via tool" : ""})`;
     case "state_read":
       return `state[${event.entry}] read (seq ${event.seqSeen}${event.viaTool ? ", via tool" : ""})`;
-    case "context_transform":
-      return `${event.nodeId}: context ${event.transformKind} (${event.sourceMessages.length} -> ${event.resultMessages.length} messages)`;
+    case "context_appended":
+      return `${event.nodeId}: context now ${event.messageCount} messages`;
+    case "context_compacted":
+      return `${event.nodeId}: context ${event.method} (${event.beforeMessages.length} -> ${event.afterMessages.length} messages)`;
+    case "llm_config_set":
+      return `${event.nodeId}: gate set ${JSON.stringify(event.patch)}`;
     case "run_finished":
       return `run finished`;
     case "run_failed":

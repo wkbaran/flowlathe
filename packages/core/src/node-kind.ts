@@ -6,7 +6,7 @@ export const NODE_KINDS = [
   "map",
   "pause",
   "userInput",
-  "contextTransform",
+  "gate",
 ] as const;
 
 export type NodeKind = (typeof NODE_KINDS)[number];

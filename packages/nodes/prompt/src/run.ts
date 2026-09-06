@@ -1,4 +1,16 @@
-import { READ_STATE_TOOL, WRITE_STATE_TOOL, renderTemplate, type PromptResult, type RuntimeHost } from "@flowlathe/core";
+import {
+  dropOldestHalf,
+  estimateTokenCount,
+  READ_STATE_TOOL,
+  renderContextText,
+  renderTemplate,
+  splitOldestHalf,
+  thresholdTokens,
+  WRITE_STATE_TOOL,
+  type ContextMessage,
+  type PromptResult,
+  type RuntimeHost,
+} from "@flowlathe/core";
 import type { PromptSpec } from "./schema.js";
 
 const MAX_TOOL_ROUNDS = 4;
@@ -8,12 +20,22 @@ export async function runPrompt(
   spec: PromptSpec,
   inputs: Record<string, string>,
 ): Promise<PromptResult> {
+  const contextKey = spec.contextNodeId ?? spec.id;
   const renderedPrompt = renderTemplate(spec.template, inputs);
   ctx.emit({ kind: "node_started", nodeId: spec.id });
   const start = ctx.clock.now();
   try {
+    const ambient = ctx.llmConfig.get();
+    const temperature = ambient.temperature ?? spec.temperature;
+    const topK = ambient.topK ?? spec.topK;
+
+    await maybeCompact(ctx, spec, contextKey);
+
+    const priorContext = ctx.context.get(contextKey);
+    const finalPrompt = priorContext.length > 0 ? `${renderContextText(priorContext)}\nuser: ${renderedPrompt}` : renderedPrompt;
+
     const tools = spec.enableStateTools ? [READ_STATE_TOOL, WRITE_STATE_TOOL] : undefined;
-    let prompt = renderedPrompt;
+    let prompt = finalPrompt;
     let result;
     for (let round = 0; ; round++) {
       result = await ctx.scheduler.submit({
@@ -21,6 +43,8 @@ export async function runPrompt(
         modelId: spec.modelId,
         nodeId: spec.id,
         prompt,
+        temperature,
+        topK,
         tools,
         onToken: (token) => ctx.emit({ kind: "token", nodeId: spec.id, token }),
       });
@@ -31,12 +55,19 @@ export async function runPrompt(
       const resultLines = result.toolCalls.map((call) => runBuiltinTool(ctx, spec.id, call));
       prompt = `${prompt}\n[tool calls]\n${resultLines.join("\n")}\nContinue.`;
     }
+
+    ctx.context.append(contextKey, [
+      { role: "user", content: renderedPrompt },
+      { role: "assistant", content: result.content },
+    ]);
+    ctx.emit({ kind: "context_appended", nodeId: spec.id, messageCount: ctx.context.get(contextKey).length });
+
     const latencyMs = ctx.clock.now() - start;
     ctx.emit({
       kind: "node_finished",
       nodeId: spec.id,
       output: result.content,
-      renderedPrompt,
+      renderedPrompt: finalPrompt,
       finishReason: result.finishReason,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
@@ -44,7 +75,7 @@ export async function runPrompt(
     });
     return {
       output: result.content,
-      renderedPrompt,
+      renderedPrompt: finalPrompt,
       finishReason: result.finishReason,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
@@ -54,6 +85,36 @@ export async function runPrompt(
     ctx.emit({ kind: "node_failed", nodeId: spec.id, error: (err as Error).message });
     throw err;
   }
+}
+
+/** Runs before this call is built: if a Gate has set a compaction method + threshold and this
+ *  node's own accumulated context (see PLAN.md's "State under parallelism" for the analogous
+ *  write-log-per-node approach) already crosses it, compacts it first — so the call about to be
+ *  built never sees the bloat. Never fires with no Gate in play (no ambient threshold configured). */
+async function maybeCompact(ctx: RuntimeHost, spec: PromptSpec, contextKey: string): Promise<void> {
+  const { compactionMethod, compactionThreshold } = ctx.llmConfig.get();
+  if (!compactionMethod || !compactionThreshold) return;
+  const current = ctx.context.get(contextKey);
+  if (current.length === 0) return;
+  const tokens = estimateTokenCount(renderContextText(current));
+  if (tokens < thresholdTokens(compactionThreshold)) return;
+
+  let compacted: ContextMessage[];
+  if (compactionMethod === "drop-oldest-half") {
+    compacted = dropOldestHalf(current);
+  } else {
+    const { system, toCompact, rest } = splitOldestHalf(current);
+    const summaryPrompt = `Summarize the following conversation excerpt in a few sentences, preserving anything a later turn might need:\n${renderContextText(toCompact)}`;
+    const summary = await ctx.scheduler.submit({
+      providerId: spec.providerId,
+      modelId: spec.modelId,
+      nodeId: spec.id,
+      prompt: summaryPrompt,
+    });
+    compacted = [...system, { role: "system", content: summary.content }, ...rest];
+  }
+  ctx.context.replace(contextKey, compacted);
+  ctx.emit({ kind: "context_compacted", nodeId: spec.id, method: compactionMethod, beforeMessages: current, afterMessages: compacted });
 }
 
 function runBuiltinTool(ctx: RuntimeHost, nodeId: string, call: { name: string; args: Record<string, unknown> }): string {

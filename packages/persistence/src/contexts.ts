@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ContextMessage } from "@flowlathe/core";
+import type { CompactionMethod, ContextMessage } from "@flowlathe/core";
 import { putBlob } from "./blobs.js";
 import type { Db } from "./db.js";
 import { contextMessages, contextTransformCalls, contexts, messages } from "./schema.js";
@@ -29,30 +29,28 @@ function materializeContext(
   return contextId;
 }
 
-export interface RecordContextTransformInput {
+export interface RecordContextCompactionInput {
   executionId: string;
-  transformKind: string;
+  nodeId: string;
+  method: CompactionMethod;
   sourceMessages: ContextMessage[];
   resultMessages: ContextMessage[];
-  providerId?: string | undefined;
-  modelId?: string | undefined;
 }
 
-export interface RecordedContextTransform {
+export interface RecordedContextCompaction {
   sourceContextId: string;
   resultContextId: string;
   transformCallId: string;
 }
 
 /**
- * Persists one context-transform call as immutable version lineage: messages are content-
+ * Persists one Gate-triggered compaction as immutable version lineage: messages are content-
  * addressed (never duplicated), a context version is just an ordered list of message ids, and
- * `context_transform_calls` links source -> result so both the version tree and "which model
- * performed this compaction" are queryable. `models.id` (the FK column) is left null — like
- * `responses.model_id`, node data's `providerId`/`modelId` are adapter-facing strings, not rows
- * in the `models` catalog table; they're kept in `paramsJson` instead so nothing is lost.
+ * `context_transform_calls` links source -> result. Ordinary per-turn appends aren't persisted
+ * here at all — that content already lives in `responses` (rendered prompt + output per call);
+ * this table exists for the one operation that's actually lossy and worth auditing.
  */
-export function recordContextTransform(db: Db, input: RecordContextTransformInput): RecordedContextTransform {
+export function recordContextCompaction(db: Db, input: RecordContextCompactionInput): RecordedContextCompaction {
   const sourceContextId = materializeContext(db, input.executionId, null, null, input.sourceMessages);
   const transformCallId = randomUUID();
   const resultContextId = materializeContext(db, input.executionId, sourceContextId, transformCallId, input.resultMessages);
@@ -61,8 +59,8 @@ export function recordContextTransform(db: Db, input: RecordContextTransformInpu
       id: transformCallId,
       sourceContextId,
       resultContextId,
-      transformKind: input.transformKind,
-      paramsJson: { providerId: input.providerId ?? null, modelId: input.modelId ?? null },
+      transformKind: input.method,
+      paramsJson: { nodeId: input.nodeId },
     })
     .run();
   return { sourceContextId, resultContextId, transformCallId };
