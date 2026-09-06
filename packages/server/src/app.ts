@@ -7,7 +7,7 @@ import { ExecutionHub } from "./execution-hub.js";
 import { registerExecutionRoutes } from "./routes/executions.js";
 import { registerFlowRoutes } from "./routes/flows.js";
 import { registerProviderRoutes } from "./routes/providers.js";
-import { registerSpotifyPluginRoutes } from "./routes/plugins-spotify.js";
+import { registerSpotifyPluginRoutes, type McpServerStatus } from "./routes/plugins-spotify.js";
 import type { SchedulerRegistry } from "./scheduler-registry.js";
 
 export interface BuildAppOptions {
@@ -17,9 +17,12 @@ export interface BuildAppOptions {
   staticRoot?: string;
   /** Undefined (no Spotify config) when SPOTIFY_CLIENT_ID isn't set. */
   spotifyConfig?: SpotifyOAuthConfig | undefined;
-  /** Tool registrations contributed by configured plugins (e.g. Spotify), threaded into every
-   *  execution's ToolRegistry alongside the built-in "state" toolset. Empty when none configured. */
+  /** Tool registrations contributed by configured plugins (e.g. Spotify, MCP servers), threaded
+   *  into every execution's ToolRegistry alongside the built-in "state" toolset. Empty when none
+   *  configured. */
   pluginToolsets?: ToolRegistration[] | undefined;
+  /** One entry per successfully-or-unsuccessfully-discovered MCP server, for `/api/plugins/status`. */
+  mcpStatuses?: Record<string, McpServerStatus> | undefined;
 }
 
 export function buildApp(opts: BuildAppOptions): FastifyInstance {
@@ -43,7 +46,12 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     credentialKey: opts.credentialKey,
     schedulerRegistry: opts.schedulerRegistry,
   });
-  registerSpotifyPluginRoutes(app, { db: opts.db, credentialKey: opts.credentialKey, config: opts.spotifyConfig });
+  registerSpotifyPluginRoutes(app, {
+    db: opts.db,
+    credentialKey: opts.credentialKey,
+    config: opts.spotifyConfig,
+    ...(opts.mcpStatuses ? { mcpStatuses: opts.mcpStatuses } : {}),
+  });
 
   if (opts.staticRoot) {
     const staticRoot = opts.staticRoot;

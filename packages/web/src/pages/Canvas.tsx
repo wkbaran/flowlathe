@@ -112,6 +112,7 @@ function requiredToolsetsFrom(ns: Node[]): string[] {
 }
 
 function displayName(toolset: string): string {
+  if (toolset.startsWith("mcp:")) return `${toolset.slice("mcp:".length)} (MCP)`;
   return toolset.charAt(0).toUpperCase() + toolset.slice(1);
 }
 
@@ -409,7 +410,11 @@ export function Canvas() {
   const missingDeps = requiredToolsetsFrom(nodes).flatMap((toolset) => {
     const status = pluginStatuses[toolset];
     if (!status?.configured) return [`${displayName(toolset)} plugin is not configured on the server`];
-    if (!status.connected) return [`${displayName(toolset)} is not connected — connect it from Providers`];
+    if (!status.connected) {
+      return toolset.startsWith("mcp:")
+        ? [`${displayName(toolset)} MCP server is not reachable — check its config and restart the server`]
+        : [`${displayName(toolset)} is not connected — connect it from Providers`];
+    }
     return [];
   });
 
@@ -499,6 +504,7 @@ export function Canvas() {
                   providers={providers}
                   modelsByProvider={modelsByProvider}
                   otherNodes={nodes.filter((n) => n.id !== selectedNode.id)}
+                  pluginStatuses={pluginStatuses}
                   onChange={updateSelectedNodeData}
                   onParentChange={updateSelectedNodeParent}
                 />
@@ -668,10 +674,11 @@ function NodeProperties(props: {
   providers: ProviderRecord[];
   modelsByProvider: Record<string, ModelRecord[]>;
   otherNodes: Node[];
+  pluginStatuses: Record<string, PluginStatus>;
   onChange: (patch: Record<string, unknown>) => void;
   onParentChange: (parentId: string) => void;
 }) {
-  const { node, providers, modelsByProvider, otherNodes, onChange, onParentChange } = props;
+  const { node, providers, modelsByProvider, otherNodes, pluginStatuses, onChange, onParentChange } = props;
   const data = node.data as Record<string, unknown>;
   const type = node.type as NodeKind;
 
@@ -724,23 +731,28 @@ function NodeProperties(props: {
             }
             label="Enable read_state/write_state tool"
           />
-          <FormControlLabel
-            control={
-              <Checkbox
-                size="small"
-                checked={((data["enabledToolsets"] as string[] | undefined) ?? []).includes("spotify")}
-                onChange={(e) => {
-                  const current = (data["enabledToolsets"] as string[] | undefined) ?? [];
-                  onChange({
-                    enabledToolsets: e.target.checked
-                      ? [...current, "spotify"]
-                      : current.filter((t) => t !== "spotify"),
-                  });
-                }}
+          {Object.keys(pluginStatuses)
+            .sort()
+            .map((toolset) => (
+              <FormControlLabel
+                key={toolset}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={((data["enabledToolsets"] as string[] | undefined) ?? []).includes(toolset)}
+                    onChange={(e) => {
+                      const current = (data["enabledToolsets"] as string[] | undefined) ?? [];
+                      onChange({
+                        enabledToolsets: e.target.checked
+                          ? [...current, toolset]
+                          : current.filter((t) => t !== toolset),
+                      });
+                    }}
+                  />
+                }
+                label={`Enable ${displayName(toolset)} tools`}
               />
-            }
-            label="Enable Spotify tools (search/playlists/library)"
-          />
+            ))}
           <TextField
             size="small"
             type="number"

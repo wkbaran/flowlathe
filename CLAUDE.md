@@ -301,6 +301,94 @@ rediscover them the hard way.
       exports (the script is a faithful record of the graph), it just refuses to run. Covered by
       `packages/testing/src/plugin-gate.test.ts`, which actually spawns the compiled script rather
       than only asserting on the generated source string.
+- **Slice 6 (Tools and MCP) landed as `@flowlathe/plugin-mcp`, an MCP client (stdio/SSE/
+  Streamable HTTP) built on `@modelcontextprotocol/sdk@1.30.0`, following the tool-registry
+  path Spotify already established.** Scope decisions and non-obvious pitfalls found building it:
+  - **Config is a JSON file, not a DB table.** `MCP_SERVERS_CONFIG_PATH` points at a file shaped
+    like `{"mcpServers": {"<name>": {...}}}` — the exact shape Claude Desktop/Code use for their
+    own MCP config, chosen so an operator can often point at a file they already have. This
+    mirrors Spotify's operator-configured-at-boot pattern (`packages/server/src/index.ts`), not
+    a DB-backed CRUD UI — deliberately: MCP servers are read once at boot
+    (`packages/server/src/mcp-config.ts`'s `discoverMcpToolsets`), same as Spotify's toolset is
+    built once. A live "add a server from the UI without restarting" flow is future work, same
+    category of cut as Spotify's "add a plugin by editing `index.ts`."
+  - **Discovery happens once, at boot — not per-run, not live.** `createMcpToolset`
+    (`packages/plugins/mcp/src/toolset.ts`) connects once to list a server's tools and builds
+    static `ToolRegistration`s from that snapshot; only *invoking* a tool reconnects. This means
+    a server added/fixed after boot needs a server restart to be picked up, and — sharper —
+    a server that fails discovery contributes **zero** tool registrations, which
+    `findMissingToolsets` (`@flowlathe/core`) can't distinguish from "never configured at all":
+    both report the generic "not configured on this server" message rather than the specific
+    connection error. The specific error *is* captured (`McpBootstrapResult.statuses`, surfaced
+    via `/api/plugins/status`'s `mcp:<name>.connected`), just not threaded into
+    `findMissingToolsets`'s reasoning the way Spotify's live `unavailableReason()` check is.
+    Fixing this properly means re-discovering per-run (or on a timer) instead of once at boot.
+  - **The stdio security model is deliberately narrower than Flowise's `MCPToolkit`
+    (`packages/plugins/mcp/src/security.ts`, ported/trimmed).** flowlathe is a single-user local server — the
+    `MCP_SERVERS_CONFIG_PATH` file is written by the same operator who runs the server, unlike
+    Flowise where a less-trusted workspace member might configure a node's MCP settings. Kept:
+    a command allowlist (`MCP_ALLOWED_COMMANDS`, empty/unset = nothing runs, mirroring
+    `SPOTIFY_CLIENT_ID`'s secure-default gating), the per-command dangerous-flag table (blocks
+    `npx -c`, `node -e`, etc. even for an allowed command), shell-metacharacter/chaining
+    rejection in args, no `cwd` override, and a null-byte check on env values. Dropped: Flowise's
+    separate env-var-*name* allowlist and its absolute-script-path allowlist (both exist there to
+    guard against a less-trusted config author than flowlathe has) and its SSRF `checkDenyList`/
+    `secureFetch` for the HTTP/SSE path (aimed at a hosted multi-tenant threat model — less
+    relevant when the operator configured the URL themselves).
+  - **`ToolSpec.parameters.properties` (`@flowlathe/core`) widened from a narrow per-property
+    shape to `Record<string, unknown>`** — an MCP server's `inputSchema` is an arbitrary JSON
+    schema (nested objects, enums, `$ref`s) that no provider adapter actually validates against;
+    both `toOllamaTool` and the OpenAI-compat adapter forward `parameters` verbatim to the model
+    API. The old narrow type only ever existed to describe flowlathe's own two hand-written tool
+    specs (`READ_STATE_TOOL`/`WRITE_STATE_TOOL`) plus Spotify's — MCP is the first source of tool
+    specs flowlathe doesn't author itself.
+  - **The MCP SDK's own transport classes don't typecheck against `exactOptionalPropertyTypes`.**
+    `StreamableHTTPClientTransport`/`SSEClientTransport`/`InMemoryTransport` all declare a
+    `sessionId?: string` field whose getter returns `string | undefined` — under this repo's
+    `exactOptionalPropertyTypes`, an optional property must be *either* absent *or* exactly
+    `string`, never explicitly `undefined`, so passing any of these classes where the SDK's own
+    `Transport` interface is expected fails to typecheck. Not a bug in flowlathe's code — the SDK
+    itself presumably isn't built with this flag. Routed around with a narrow, documented
+    `asTransport()` cast (`packages/plugins/mcp/src/client.ts`, duplicated in
+    `packages/plugins/mcp/src/toolset.test.ts` for the server-side transport classes, which have
+    the identical issue). Any *new* code constructing one of these transport classes directly will
+    hit the same error and need the same cast.
+  - **A `StreamableHTTPServerTransport` in stateful mode can only run ONE session per instance —
+    a second independent client `connect()` against a *shared* transport instance fails with
+    `"Invalid Request: Server already initialized"`.** Found writing `toolset.test.ts`'s HTTP
+    fixture server: `McpClient` opens a fresh `Client`/session per call (`listTools()` and each
+    `callTool()` are independent connections, not one held-open session — see `client.ts`'s
+    class doc comment), so a naive single-`McpServer`-instance test server broke on the second
+    call. The SDK's own "stateless" mode (`sessionIdGenerator: undefined`) takes this further —
+    it expects a **brand-new** `McpServer` + transport for literally every HTTP request, including
+    the `initialize` and `notifications/initialized` pair within one client's own connect
+    sequence, which doesn't model a session at all. The fix, and the pattern a real
+    Streamable-HTTP server needs: a session-id-keyed map of `{server, transport}` pairs, a new
+    pair created only when a request arrives with no known `mcp-session-id` header, registered
+    into the map via the transport's `onsessioninitialized` callback once the SDK assigns the id
+    (see `createSessionedMcpHttpServer` in `toolset.test.ts`).
+  - **Canvas.tsx's per-node toolset checkboxes are no longer hardcoded to Spotify.** They're now
+    rendered by mapping over whatever keys `/api/plugins/status` returns (`spotify`, `mcp:<name>`
+    per configured server, ...) — the same generalization the missing-dependency banner already
+    had. `displayName()` special-cases an `mcp:` prefix into `"<name> (MCP)"`; anything else is
+    just capitalized. A third plugin type needs no Canvas.tsx changes to get a working checkbox.
+  - **`packages/server/src/index.ts`'s bootstrap is now `await`-ing at the top level** (tool
+    discovery is inherently async), which is fine under this repo's ESM/Node 22 setup but is a
+    change in kind from every other top-level statement there being synchronous — don't
+    reintroduce a synchronous assumption (e.g. a test that imports `index.ts` for its side
+    effects) without accounting for this.
+  - **Unrelated pre-existing inaccuracy noticed while manually smoke-testing this slice**:
+    `README.md`'s quickstart says `node packages/server/dist/index.js`, but
+    `packages/server/package.json` has no `build` script at all — `start`/`dev` both run
+    `src/index.ts` directly via `tsx`. Not caused by or fixed as part of this slice; flagged here
+    so the next agent doesn't waste time looking for a `dist/` that was never going to exist.
+  - **No Playwright e2e spec for this slice**, unlike every prior slice (PLAN.md's verification
+    section: "every slice adds a spec"). Coverage instead comes from `@flowlathe/plugin-mcp`'s
+    own tests, which exercise real transports (a spawned stdio subprocess, a real local HTTP
+    server) end to end, plus a manual smoke test through the actual running server/API/tool-loop
+    during development. An e2e spec would need a bundled fixture MCP server file and a
+    `MCP_SERVERS_CONFIG_PATH` wired into `playwright/playwright.config.ts`'s `webServer` env —
+    not done here; a real gap if a future agent is asked to hardening-pass this feature.
 - **A router branch's untaken side now surfaces as a real `node_skipped` `RunEvent`/UI status
   (resolved; was a known v1 gap — see README).** The graph-analysis part already existed and was
   correct: `GraphEngine.dispatchNode`'s `never`-port detection (`packages/interpreter/src/run-graph.ts`)

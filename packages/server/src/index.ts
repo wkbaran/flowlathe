@@ -6,6 +6,7 @@ import { ensureDefaultMockProvider, getPluginCredential, openDb, runMigrations, 
 import { createSpotifyToolset, SpotifyClient, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
+import { discoverMcpToolsets, loadMcpServersConfig } from "./mcp-config.js";
 import { SchedulerRegistry } from "./scheduler-registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,7 +43,19 @@ if (spotifyClientId) {
   pluginToolsets = createSpotifyToolset(spotifyClient);
 }
 
-const app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, staticRoot, spotifyConfig, pluginToolsets });
+/** `MCP_SERVERS_CONFIG_PATH` points at a JSON file in the same `{"mcpServers": {...}}` shape
+ *  Claude Desktop/Code use. Discovery is async (each server is connected to once, to list its
+ *  tools), so the rest of boot waits on it — see `mcp-config.ts`. `MCP_ALLOWED_COMMANDS` gates
+ *  which commands a stdio server config may spawn; unset means none may (secure default). */
+const mcpServersConfigPath = process.env["MCP_SERVERS_CONFIG_PATH"];
+const mcpServers = mcpServersConfigPath ? loadMcpServersConfig(mcpServersConfigPath) : {};
+const { toolsets: mcpToolsets, statuses: mcpStatuses } = await discoverMcpToolsets(
+  mcpServers,
+  process.env["MCP_ALLOWED_COMMANDS"],
+);
+pluginToolsets = [...pluginToolsets, ...mcpToolsets];
+
+const app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, staticRoot, spotifyConfig, pluginToolsets, mcpStatuses });
 
 app.listen({ port, host: "127.0.0.1" }, (err, address) => {
   if (err) {

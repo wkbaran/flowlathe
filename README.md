@@ -58,6 +58,10 @@ with screenshots of every feature described below.
 - **Compile to a standalone script.** Any flow can be exported as a self-contained TypeScript
   program built on `@flowlathe/runtime` and `@flowlathe/providers` — no server or canvas
   required to run it again.
+- **MCP tool servers.** Point flowlathe at an `mcpServers` config file (the same shape Claude
+  Desktop/Code use) to connect stdio, SSE, or Streamable HTTP MCP servers; each server's tools
+  become a toolset a prompt node opts into, the same way as the built-in state tools or a
+  plugin. Tool names/descriptions are sanitized before they ever reach a model's context.
 
 ## Tech stack
 
@@ -66,8 +70,10 @@ with screenshots of every feature described below.
 - **Providers:** Ollama and OpenAI-compatible HTTP APIs, plus a deterministic Mock provider for
   testing and demos.
 - **Monorepo:** pnpm workspaces + Turborepo. Packages: `core`, `interpreter`, `compiler`,
-  `runtime`, `providers`, `persistence`, `server`, `web`, `testing`, and one package per node
-  kind under `packages/nodes/*`.
+  `runtime`, `providers`, `persistence`, `server`, `web`, `testing`, one package per node kind
+  under `packages/nodes/*`, and one package per plugin (Spotify, MCP) under `packages/plugins/*`.
+- **Tools/MCP:** `@modelcontextprotocol/sdk` for the MCP client (stdio, SSE, and Streamable
+  HTTP transports).
 - **Testing:** Vitest for unit/integration tests, Playwright for end-to-end tests.
 
 ## Quickstart
@@ -94,6 +100,23 @@ For local development with hot reload:
 ```bash
 pnpm dev
 ```
+
+To connect MCP tool servers, set `MCP_SERVERS_CONFIG_PATH` to a JSON file shaped like:
+
+```json
+{
+  "mcpServers": {
+    "my-server": { "command": "npx", "args": ["-y", "some-mcp-server"] },
+    "remote-server": { "url": "https://example.com/mcp" }
+  }
+}
+```
+
+A stdio server (one with a `command`) only runs if its command is also listed in
+`MCP_ALLOWED_COMMANDS` (comma-separated) — unset means none may run. Each server's tools are
+discovered once at server startup and exposed as the toolset `mcp:<name>`; check
+`/api/plugins/status` (or the workflow-dependency banner on the canvas) if a server fails to
+connect.
 
 ## Known v1 limitations
 

@@ -3,13 +3,17 @@ import type { CompactionMethod, ContextMessage, ContextStore, LlmConfigStore } f
 import type { MergeRule, StateStore } from "./state.js";
 
 /** JSON-schema-shaped, loosely typed — just enough for the two providers we implement to
- *  describe a callable tool. Kept minimal deliberately: general MCP support is still future work. */
+ *  describe a callable tool. `properties` is `Record<string, unknown>` rather than a narrower
+ *  per-property shape because an MCP server's `inputSchema` is an arbitrary JSON schema (nested
+ *  objects, enums, `$ref`s, ...) that this codebase never validates — providers forward
+ *  `parameters` to the model API verbatim (see `packages/providers/src/ollama.ts`'s
+ *  `toOllamaTool`), so the TS type only needs to describe the top-level envelope. */
 export interface ToolSpec {
   name: string;
   description: string;
   parameters: {
     type: "object";
-    properties: Record<string, { type: string; description?: string }>;
+    properties: Record<string, unknown>;
     required?: string[];
   };
 }
