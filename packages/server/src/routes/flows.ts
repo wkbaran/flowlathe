@@ -7,6 +7,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ExecutionHub } from "../execution-hub.js";
 import { runFlow } from "../executor.js";
+import { startStepExecution } from "../stepper.js";
 
 const CreateFlowBody = z.object({ name: z.string().min(1) });
 const SaveFlowBody = z.object({ graph: z.unknown() });
@@ -59,6 +60,12 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
     if (!flow) return reply.code(404).send({ error: "flow not found" });
     const { executionId } = runFlow({ db, hub, scheduler, flowVersionId: flow.flowVersionId, graph: flow.graph });
     return reply.code(202).send({ executionId });
+  });
+
+  app.post<{ Params: { id: string } }>("/api/flows/:id/step-start", async (request, reply) => {
+    const flow = getFlow(db, request.params.id);
+    if (!flow) return reply.code(404).send({ error: "flow not found" });
+    return reply.code(201).send(startStepExecution(db, flow.flowVersionId));
   });
 
   app.get<{ Params: { id: string } }>("/api/flows/:id/export", async (request, reply) => {

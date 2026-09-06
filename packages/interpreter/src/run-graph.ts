@@ -24,141 +24,230 @@ export interface RunGraphResult {
   outputs: Record<string, string>;
 }
 
+/** The engine's full progress state — enough to resume a fresh engine instance from scratch. */
+export interface EngineSnapshot {
+  outputs: Record<string, Record<string, PortSlot>>;
+}
+
 interface EdgeRef {
   source: string;
   sourceHandle: string;
 }
 
-interface EngineContext {
-  run: Run;
-  nodesById: Map<string, FlowNode>;
-  bodyByParent: Map<string, FlowNode>;
-  edgesByTargetPort: Map<string, Map<string, EdgeRef[]>>;
-  outputs: Map<string, Record<string, PortSlot>>;
-}
+/**
+ * A graph walker over the Activation/PortSlot readiness lattice. Reusable for both "run"
+ * (dispatch every ready activation concurrently) and "step" (dispatch exactly one, in
+ * deterministic order, and let the caller snapshot between steps) modes — see PLAN.md's
+ * "The interpreter" section. Loop/Map bodies are a single node (via `parentId`), driven
+ * atomically inside one dispatch; stepping treats a whole Loop/Map as one step (see CLAUDE.md).
+ */
+export class GraphEngine {
+  private readonly run: Run;
+  private readonly nodesById: Map<string, FlowNode>;
+  private readonly bodyByParent: Map<string, FlowNode>;
+  private readonly edgesByTargetPort: Map<string, Map<string, EdgeRef[]>>;
+  private readonly outputs: Map<string, Record<string, PortSlot>>;
+  private readonly rank: Map<string, number>;
+  private readonly running = new Map<string, Promise<void>>();
 
-export async function runGraph({ graph, run }: RunGraphOptions): Promise<RunGraphResult> {
-  const nodesById = new Map(graph.nodes.filter((n) => !n.parentId).map((n) => [n.id, n]));
-  const bodyByParent = new Map<string, FlowNode>();
-  for (const n of graph.nodes) {
-    if (n.parentId) bodyByParent.set(n.parentId, n);
-  }
-
-  const edgesByTargetPort = new Map<string, Map<string, EdgeRef[]>>();
-  for (const edge of graph.edges) {
-    if (!nodesById.has(edge.target)) continue; // body-scoped edges are handled by loop/map dispatch, not here
-    let byPort = edgesByTargetPort.get(edge.target);
-    if (!byPort) {
-      byPort = new Map();
-      edgesByTargetPort.set(edge.target, byPort);
+  constructor(graph: FlowGraph, run: Run, initialOutputs?: Map<string, Record<string, PortSlot>>) {
+    this.run = run;
+    this.nodesById = new Map(graph.nodes.filter((n) => !n.parentId).map((n) => [n.id, n]));
+    this.bodyByParent = new Map();
+    for (const n of graph.nodes) {
+      if (n.parentId) this.bodyByParent.set(n.parentId, n);
     }
-    const port = edge.targetHandle ?? "input";
-    const list = byPort.get(port) ?? [];
-    list.push({ source: edge.source, sourceHandle: edge.sourceHandle ?? "output" });
-    byPort.set(port, list);
-  }
 
-  const ctx: EngineContext = { run, nodesById, bodyByParent, edgesByTargetPort, outputs: new Map() };
-
-  const remaining = new Set(nodesById.keys());
-  const running = new Map<string, Promise<void>>();
-
-  while (remaining.size > 0 || running.size > 0) {
-    const ready = [...remaining].filter((id) => isReady(id, ctx));
-    for (const id of ready) {
-      remaining.delete(id);
-      const promise = dispatchNode(ctx.nodesById.get(id)!, ctx).finally(() => running.delete(id));
-      running.set(id, promise);
+    this.edgesByTargetPort = new Map();
+    for (const edge of graph.edges) {
+      if (!this.nodesById.has(edge.target)) continue; // body-scoped edges: handled by loop/map dispatch
+      let byPort = this.edgesByTargetPort.get(edge.target);
+      if (!byPort) {
+        byPort = new Map();
+        this.edgesByTargetPort.set(edge.target, byPort);
+      }
+      const port = edge.targetHandle ?? "input";
+      const list = byPort.get(port) ?? [];
+      list.push({ source: edge.source, sourceHandle: edge.sourceHandle ?? "output" });
+      byPort.set(port, list);
     }
-    if (running.size === 0) {
-      throw new Error(`cycle detected or missing upstream node among: ${[...remaining].join(", ")}`);
+
+    this.outputs = initialOutputs ?? new Map();
+    this.rank = computeTopoRank(this.nodesById, this.edgesByTargetPort);
+  }
+
+  static restore(graph: FlowGraph, run: Run, snapshot: EngineSnapshot): GraphEngine {
+    const outputs = new Map(Object.entries(snapshot.outputs));
+    return new GraphEngine(graph, run, outputs);
+  }
+
+  snapshot(): EngineSnapshot {
+    return { outputs: Object.fromEntries(this.outputs) };
+  }
+
+  isDone(): boolean {
+    return this.remaining().length === 0 && this.running.size === 0;
+  }
+
+  /** Ready node ids in deterministic order: topological rank, then node id. */
+  readyNodeIds(): string[] {
+    return this.remaining()
+      .filter((id) => this.isReady(id))
+      .sort((a, b) => (this.rank.get(a)! - this.rank.get(b)!) || a.localeCompare(b));
+  }
+
+  /** Dispatches every currently-ready activation, repeating until nothing is left. */
+  async runToCompletion(): Promise<RunGraphResult> {
+    while (this.remaining().length > 0 || this.running.size > 0) {
+      const ready = this.readyNodeIds();
+      for (const id of ready) this.admit(id);
+      if (this.running.size === 0) {
+        throw new Error(`cycle detected or missing upstream node among: ${this.remaining().join(", ")}`);
+      }
+      await Promise.race(this.running.values());
     }
-    await Promise.race(running.values());
+    return { outputs: this.collectOutputs() };
   }
 
-  const outputs: Record<string, string> = {};
-  for (const [nodeId, slots] of ctx.outputs) {
-    const firstValue = Object.values(slots).find(isValue);
-    if (firstValue) outputs[nodeId] = firstValue.value;
+  /** Dispatches exactly one ready activation (or none, if done) and awaits its settlement. */
+  async step(): Promise<{ nodeId: string } | undefined> {
+    const ready = this.readyNodeIds();
+    const nodeId = ready[0];
+    if (!nodeId) return undefined;
+    const promise = this.admit(nodeId);
+    await promise;
+    return { nodeId };
   }
-  return { outputs };
-}
 
-function isReady(nodeId: string, ctx: EngineContext): boolean {
-  const node = ctx.nodesById.get(nodeId)!;
-  const spec = parseSpec(node, ctx);
-  const ports = registry[node.type].inputPorts(spec);
-  return ports.every((p) => portSlot(nodeId, p.name, ctx).kind !== "empty");
-}
-
-function portSlot(nodeId: string, port: string, ctx: EngineContext): PortSlot {
-  const edges = ctx.edgesByTargetPort.get(nodeId)?.get(port) ?? [];
-  if (edges.length === 0) return { kind: "empty" };
-
-  let sawValue: PortSlot | undefined;
-  let allNever = true;
-  let allResolved = true;
-  for (const edge of edges) {
-    const sourceSlots = ctx.outputs.get(edge.source);
-    const slot = sourceSlots?.[edge.sourceHandle];
-    if (!slot) {
-      allResolved = false;
-      allNever = false;
-      continue;
+  collectOutputs(): Record<string, string> {
+    const outputs: Record<string, string> = {};
+    for (const [nodeId, slots] of this.outputs) {
+      const firstValue = Object.values(slots).find(isValue);
+      if (firstValue) outputs[nodeId] = firstValue.value;
     }
-    if (isValue(slot)) sawValue = slot;
-    if (!isNever(slot)) allNever = false;
-  }
-  if (sawValue) return sawValue;
-  if (allResolved && allNever) return neverSlot("upstream_skipped");
-  return { kind: "empty" };
-}
-
-function parseSpec(node: FlowNode, ctx: EngineContext): unknown {
-  void ctx;
-  const data = registry[node.type].schema.parse(node.data) as Record<string, unknown>;
-  return { id: node.id, ...data };
-}
-
-async function dispatchNode(node: FlowNode, ctx: EngineContext): Promise<void> {
-  if (node.type === "loop" || node.type === "map") {
-    await dispatchLoopOrMap(node, ctx);
-    return;
+    return outputs;
   }
 
-  const descriptor = registry[node.type];
-  const spec = parseSpec(node, ctx);
-  const ports = descriptor.inputPorts(spec);
-  const slots = Object.fromEntries(ports.map((p) => [p.name, portSlot(node.id, p.name, ctx)]));
-
-  if (ports.some((p) => p.required && isNever(slots[p.name]!))) {
-    skipNode(node, spec, ctx);
-    return;
-  }
-  if (ports.length > 0 && ports.every((p) => isNever(slots[p.name]!))) {
-    skipNode(node, spec, ctx);
-    return;
+  private remaining(): string[] {
+    return [...this.nodesById.keys()].filter((id) => !this.outputs.has(id));
   }
 
-  const inputs = Object.fromEntries(
-    Object.entries(slots)
-      .filter((entry): entry is [string, Extract<PortSlot, { kind: "value" }>] => isValue(entry[1]))
-      .map(([name, slot]) => [name, slot.value]),
-  );
-  const result = await descriptor.dispatch!(ctx.run, spec, inputs);
-  const outPorts = descriptor.outputPorts(spec);
-  const outSlots: Record<string, PortSlot> = {};
-  for (const port of outPorts) {
-    outSlots[port] = port in result ? valueSlot(result[port]!) : neverSlot("branch_not_taken");
+  private admit(nodeId: string): Promise<void> {
+    const promise = this.dispatchNode(this.nodesById.get(nodeId)!).finally(() => this.running.delete(nodeId));
+    this.running.set(nodeId, promise);
+    return promise;
   }
-  ctx.outputs.set(node.id, outSlots);
-}
 
-function skipNode(node: FlowNode, spec: unknown, ctx: EngineContext): void {
-  const outPorts = registry[node.type].outputPorts(spec);
-  const outSlots: Record<string, PortSlot> = {};
-  for (const port of outPorts) outSlots[port] = neverSlot("upstream_skipped");
-  ctx.outputs.set(node.id, outSlots);
+  private isReady(nodeId: string): boolean {
+    const node = this.nodesById.get(nodeId)!;
+    const spec = this.parseSpec(node);
+    const ports = registry[node.type].inputPorts(spec);
+    return ports.every((p) => this.portSlot(nodeId, p.name).kind !== "empty");
+  }
+
+  private portSlot(nodeId: string, port: string): PortSlot {
+    const edges = this.edgesByTargetPort.get(nodeId)?.get(port) ?? [];
+    if (edges.length === 0) return { kind: "empty" };
+
+    let sawValue: PortSlot | undefined;
+    let allNever = true;
+    let allResolved = true;
+    for (const edge of edges) {
+      const sourceSlots = this.outputs.get(edge.source);
+      const slot = sourceSlots?.[edge.sourceHandle];
+      if (!slot) {
+        allResolved = false;
+        allNever = false;
+        continue;
+      }
+      if (isValue(slot)) sawValue = slot;
+      if (!isNever(slot)) allNever = false;
+    }
+    if (sawValue) return sawValue;
+    if (allResolved && allNever) return neverSlot("upstream_skipped");
+    return { kind: "empty" };
+  }
+
+  private parseSpec(node: FlowNode): unknown {
+    const data = registry[node.type].schema.parse(node.data) as Record<string, unknown>;
+    return { id: node.id, ...data };
+  }
+
+  private async dispatchNode(node: FlowNode): Promise<void> {
+    if (node.type === "loop" || node.type === "map") {
+      await this.dispatchLoopOrMap(node);
+      return;
+    }
+
+    const descriptor = registry[node.type];
+    const spec = this.parseSpec(node);
+    const ports = descriptor.inputPorts(spec);
+    const slots = Object.fromEntries(ports.map((p) => [p.name, this.portSlot(node.id, p.name)]));
+
+    if (ports.some((p) => p.required && isNever(slots[p.name]!))) {
+      this.skipNode(node, spec);
+      return;
+    }
+    if (ports.length > 0 && ports.every((p) => isNever(slots[p.name]!))) {
+      this.skipNode(node, spec);
+      return;
+    }
+
+    const inputs = Object.fromEntries(
+      Object.entries(slots)
+        .filter((entry): entry is [string, Extract<PortSlot, { kind: "value" }>] => isValue(entry[1]))
+        .map(([name, slot]) => [name, slot.value]),
+    );
+    const result = await descriptor.dispatch!(this.run, spec, inputs);
+    const outPorts = descriptor.outputPorts(spec);
+    const outSlots: Record<string, PortSlot> = {};
+    for (const port of outPorts) {
+      outSlots[port] = port in result ? valueSlot(result[port]!) : neverSlot("branch_not_taken");
+    }
+    this.outputs.set(node.id, outSlots);
+  }
+
+  private skipNode(node: FlowNode, spec: unknown): void {
+    const outPorts = registry[node.type].outputPorts(spec);
+    const outSlots: Record<string, PortSlot> = {};
+    for (const port of outPorts) outSlots[port] = neverSlot("upstream_skipped");
+    this.outputs.set(node.id, outSlots);
+  }
+
+  private async dispatchLoopOrMap(node: FlowNode): Promise<void> {
+    const bodyNode = this.bodyByParent.get(node.id);
+    if (!bodyNode) {
+      throw new Error(`"${node.type}" node "${node.id}" has no body node (expected a child with parentId set to it)`);
+    }
+    const bodyDescriptor = registry[bodyNode.type];
+
+    const spec = this.parseSpec(node);
+    const ports = registry[node.type].inputPorts(spec);
+    const inputs = Object.fromEntries(
+      ports.map((p) => {
+        const slot = this.portSlot(node.id, p.name);
+        return [p.name, isValue(slot) ? slot.value : ""];
+      }),
+    );
+
+    const runBody = async (injected: Record<string, string>, index: number): Promise<string> => {
+      const key = activationKey(bodyNode.id, [{ loop: node.id, index }]);
+      const bodyData = bodyDescriptor.schema.parse(bodyNode.data) as Record<string, unknown>;
+      const bodySpec = { id: key, ...bodyData };
+      const result = await bodyDescriptor.dispatch!(this.run, bodySpec, injected);
+      return firstOutputValue(bodyNode.type, bodySpec, result);
+    };
+
+    if (node.type === "loop") {
+      const loopSpec = spec as LoopSpec;
+      const result = await this.run.loop(loopSpec, inputs, (acc, i) => runBody({ [loopSpec.accPortName]: acc }, i));
+      this.outputs.set(node.id, { result: valueSlot(result) });
+    } else {
+      const mapSpec = spec as MapSpec;
+      const results = await this.run.map(mapSpec, inputs, (item, i) => runBody({ [mapSpec.itemPortName]: item }, i));
+      this.outputs.set(node.id, { results: valueSlot(JSON.stringify(results)) });
+    }
+  }
 }
 
 function firstOutputValue(kind: NodeKind, spec: unknown, result: Record<string, string>): string {
@@ -169,37 +258,55 @@ function firstOutputValue(kind: NodeKind, spec: unknown, result: Record<string, 
   throw new Error(`node produced no value on any declared output port`);
 }
 
-async function dispatchLoopOrMap(node: FlowNode, ctx: EngineContext): Promise<void> {
-  const bodyNode = ctx.bodyByParent.get(node.id);
-  if (!bodyNode) {
-    throw new Error(`"${node.type}" node "${node.id}" has no body node (expected a child with parentId set to it)`);
+/** Topological rank via Kahn's algorithm levels — used only to make step order deterministic. */
+function computeTopoRank(
+  nodesById: Map<string, FlowNode>,
+  edgesByTargetPort: Map<string, Map<string, EdgeRef[]>>,
+): Map<string, number> {
+  const dependents = new Map<string, string[]>();
+  const remainingDeps = new Map<string, number>();
+  for (const id of nodesById.keys()) {
+    dependents.set(id, []);
+    remainingDeps.set(id, 0);
   }
-  const bodyDescriptor = registry[bodyNode.type];
-
-  const spec = parseSpec(node, ctx);
-  const ports = registry[node.type].inputPorts(spec);
-  const inputs = Object.fromEntries(
-    ports.map((p) => {
-      const slot = portSlot(node.id, p.name, ctx);
-      return [p.name, isValue(slot) ? slot.value : ""];
-    }),
-  );
-
-  const runBody = async (injected: Record<string, string>, index: number): Promise<string> => {
-    const key = activationKey(bodyNode.id, [{ loop: node.id, index }]);
-    const bodyData = bodyDescriptor.schema.parse(bodyNode.data) as Record<string, unknown>;
-    const bodySpec = { id: key, ...bodyData };
-    const result = await bodyDescriptor.dispatch!(ctx.run, bodySpec, injected);
-    return firstOutputValue(bodyNode.type, bodySpec, result);
-  };
-
-  if (node.type === "loop") {
-    const loopSpec = spec as LoopSpec;
-    const result = await ctx.run.loop(loopSpec, inputs, (acc, i) => runBody({ [loopSpec.accPortName]: acc }, i));
-    ctx.outputs.set(node.id, { result: valueSlot(result) });
-  } else {
-    const mapSpec = spec as MapSpec;
-    const results = await ctx.run.map(mapSpec, inputs, (item, i) => runBody({ [mapSpec.itemPortName]: item }, i));
-    ctx.outputs.set(node.id, { results: valueSlot(JSON.stringify(results)) });
+  for (const [target, byPort] of edgesByTargetPort) {
+    for (const edges of byPort.values()) {
+      for (const edge of edges) {
+        if (!nodesById.has(edge.source)) continue;
+        dependents.get(edge.source)?.push(target);
+        remainingDeps.set(target, (remainingDeps.get(target) ?? 0) + 1);
+      }
+    }
   }
+
+  const rank = new Map<string, number>();
+  let frontier = [...nodesById.keys()].filter((id) => (remainingDeps.get(id) ?? 0) === 0);
+  let level = 0;
+  const visited = new Set<string>();
+  while (frontier.length > 0) {
+    for (const id of frontier) {
+      rank.set(id, level);
+      visited.add(id);
+    }
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const dep of dependents.get(id) ?? []) {
+        const remaining = (remainingDeps.get(dep) ?? 0) - 1;
+        remainingDeps.set(dep, remaining);
+        if (remaining === 0) next.push(dep);
+      }
+    }
+    frontier = next;
+    level++;
+  }
+  // any node not reached (cycle) still needs a rank so sorting doesn't throw; readiness will
+  // never actually admit it, and runToCompletion/step surface the cycle as an error instead.
+  for (const id of nodesById.keys()) {
+    if (!visited.has(id)) rank.set(id, level);
+  }
+  return rank;
+}
+
+export async function runGraph(opts: RunGraphOptions): Promise<RunGraphResult> {
+  return new GraphEngine(opts.graph, opts.run).runToCompletion();
 }

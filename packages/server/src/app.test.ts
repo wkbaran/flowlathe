@@ -66,27 +66,25 @@ describe("flow API", () => {
   });
 });
 
-describe("run + export", () => {
-  async function createTwoNodeFlow(): Promise<string> {
-    const created = (
-      await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Chain" } })
-    ).json();
-    const graph = {
-      nodes: [
-        { id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "start", providerId: "mock", modelId: "m" } },
-        {
-          id: "b",
-          type: "prompt",
-          position: { x: 1, y: 0 },
-          data: { template: "next: {{input}}", providerId: "mock", modelId: "m" },
-        },
-      ],
-      edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
-    };
-    await app.inject({ method: "PUT", url: `/api/flows/${created.id}`, payload: { graph } });
-    return created.id;
-  }
+async function createTwoNodeFlow(): Promise<string> {
+  const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Chain" } })).json();
+  const graph = {
+    nodes: [
+      { id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "start", providerId: "mock", modelId: "m" } },
+      {
+        id: "b",
+        type: "prompt",
+        position: { x: 1, y: 0 },
+        data: { template: "next: {{input}}", providerId: "mock", modelId: "m" },
+      },
+    ],
+    edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
+  };
+  await app.inject({ method: "PUT", url: `/api/flows/${created.id}`, payload: { graph } });
+  return created.id;
+}
 
+describe("run + export", () => {
   it("runs a flow against the mock provider and records a per-node log", async () => {
     const flowId = await createTwoNodeFlow();
     const started = await app.inject({ method: "POST", url: `/api/flows/${flowId}/run` });
@@ -111,5 +109,90 @@ describe("run + export", () => {
     const res = await app.inject({ method: "GET", url: `/api/flows/${flowId}/export` });
     expect(res.statusCode).toBe(200);
     expect(res.json().script).toContain("MockProviderAdapter");
+  });
+});
+
+describe("step debugging", () => {
+  it("advances one node per step, exposing the new snapshot each time", async () => {
+    const flowId = await createTwoNodeFlow();
+    const started = await app.inject({ method: "POST", url: `/api/flows/${flowId}/step-start` });
+    expect(started.statusCode).toBe(201);
+    const { executionId, branchId, snapshotId: initialSnapshotId } = started.json();
+
+    const step1 = (
+      await app.inject({ method: "POST", url: `/api/executions/${executionId}/step`, payload: { branchId } })
+    ).json();
+    expect(step1).toMatchObject({ done: false, nodeId: "a" });
+    expect(step1.snapshotId).not.toBe(initialSnapshotId);
+
+    const step2 = (
+      await app.inject({ method: "POST", url: `/api/executions/${executionId}/step`, payload: { branchId } })
+    ).json();
+    expect(step2).toMatchObject({ done: false, nodeId: "b" });
+
+    const step3 = (
+      await app.inject({ method: "POST", url: `/api/executions/${executionId}/step`, payload: { branchId } })
+    ).json();
+    expect(step3).toMatchObject({ done: true });
+
+    const log = (await app.inject({ method: "GET", url: `/api/executions/${executionId}?branchId=${branchId}` })).json();
+    expect(log.responses.map((r: { nodeId: string }) => r.nodeId).sort()).toEqual(["a", "b"]);
+  });
+
+  it("step-back forks a new branch, leaving the original branch's log intact", async () => {
+    const flowId = await createTwoNodeFlow();
+    const { executionId, branchId: rootBranchId } = (
+      await app.inject({ method: "POST", url: `/api/flows/${flowId}/step-start` })
+    ).json();
+
+    const step1 = (
+      await app.inject({
+        method: "POST",
+        url: `/api/executions/${executionId}/step`,
+        payload: { branchId: rootBranchId },
+      })
+    ).json();
+    const step2 = (
+      await app.inject({
+        method: "POST",
+        url: `/api/executions/${executionId}/step`,
+        payload: { branchId: rootBranchId },
+      })
+    ).json();
+    expect(step2.nodeId).toBe("b");
+
+    // step back to right after "a" ran, before "b" did
+    const forked = (
+      await app.inject({
+        method: "POST",
+        url: `/api/executions/${executionId}/step-back`,
+        payload: { snapshotId: step1.snapshotId },
+      })
+    ).json();
+    expect(forked.branchId).not.toBe(rootBranchId);
+
+    // stepping the fork re-runs "b" on the NEW branch
+    const forkedStep = (
+      await app.inject({
+        method: "POST",
+        url: `/api/executions/${executionId}/step`,
+        payload: { branchId: forked.branchId },
+      })
+    ).json();
+    expect(forkedStep.nodeId).toBe("b");
+
+    const branches = (await app.inject({ method: "GET", url: `/api/executions/${executionId}/branches` })).json();
+    expect(branches.map((b: { id: string }) => b.id).sort()).toEqual([rootBranchId, forked.branchId].sort());
+
+    // the original branch's log is untouched: still exactly the two responses from stepping it directly
+    const originalLog = (
+      await app.inject({ method: "GET", url: `/api/executions/${executionId}?branchId=${rootBranchId}` })
+    ).json();
+    expect(originalLog.responses.map((r: { nodeId: string }) => r.nodeId).sort()).toEqual(["a", "b"]);
+
+    const forkedLog = (
+      await app.inject({ method: "GET", url: `/api/executions/${executionId}?branchId=${forked.branchId}` })
+    ).json();
+    expect(forkedLog.responses.map((r: { nodeId: string }) => r.nodeId)).toEqual(["b"]);
   });
 });

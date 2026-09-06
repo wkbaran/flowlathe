@@ -50,6 +50,25 @@ export function getFlow(db: Db, id: string): FlowWithGraph | undefined {
   return { ...flow, flowVersionId: latest.id, version: latest.version, graph: latest.graphJson };
 }
 
+/** Resolves the flow owning `flowVersionId`, then returns that flow's CURRENT (latest-saved)
+ *  graph. Step sessions bind to the version active at step-start, but the graph is a live
+ *  editing surface — stepping forward should reflect edits made since. */
+export function getLatestGraphForFlowVersion(db: Db, flowVersionId: string): FlowGraph | undefined {
+  const version = db
+    .select({ flowId: flowVersions.flowId })
+    .from(flowVersions)
+    .where(eq(flowVersions.id, flowVersionId))
+    .get();
+  if (!version) return undefined;
+  const latest = db
+    .select({ graph: flowVersions.graphJson })
+    .from(flowVersions)
+    .where(eq(flowVersions.flowId, version.flowId))
+    .orderBy(desc(flowVersions.version))
+    .get();
+  return latest?.graph;
+}
+
 export function saveFlowVersion(db: Db, flowId: string, graph: FlowGraph): FlowWithGraph {
   const flow = db.select().from(flows).where(eq(flows.id, flowId)).get();
   if (!flow) throw new Error(`flow not found: ${flowId}`);

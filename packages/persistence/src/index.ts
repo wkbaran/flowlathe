@@ -3,6 +3,8 @@ export * from "./blobs.js";
 export * from "./sqlite-blob-store.js";
 export * from "./flows.js";
 export * from "./executions.js";
+export * from "./branches.js";
+export * from "./snapshots.js";
 export * from "./credentials.js";
 export * from "./providers.js";
 export * from "./models.js";

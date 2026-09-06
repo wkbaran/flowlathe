@@ -66,8 +66,9 @@ export interface ExecutionStatus {
   responses: ResponseLogEntry[];
 }
 
-export function getExecution(executionId: string): Promise<ExecutionStatus> {
-  return fetch(`/api/executions/${executionId}`).then((res) => json(res));
+export function getExecution(executionId: string, branchId?: string): Promise<ExecutionStatus> {
+  const query = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
+  return fetch(`/api/executions/${executionId}${query}`).then((res) => json(res));
 }
 
 export function resumeExecution(executionId: string, activationKey: string, value: string): Promise<void> {
@@ -76,6 +77,49 @@ export function resumeExecution(executionId: string, activationKey: string, valu
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ activationKey, value }),
   }).then(() => undefined);
+}
+
+export interface BranchRecord {
+  id: string;
+  executionId: string;
+  parentBranchId: string | null;
+  forkedFromSnapshotId: string | null;
+  label: string | null;
+  createdAt: string;
+}
+
+export function stepStart(flowId: string): Promise<{ executionId: string; branchId: string; snapshotId: string }> {
+  return fetch(`/api/flows/${flowId}/step-start`, { method: "POST" }).then((res) => json(res));
+}
+
+export interface StepOutcome {
+  done: boolean;
+  nodeId?: string;
+  snapshotId?: string;
+}
+
+export function stepOnce(executionId: string, branchId: string): Promise<StepOutcome> {
+  return fetch(`/api/executions/${executionId}/step`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ branchId }),
+  }).then((res) => json(res));
+}
+
+export function stepBack(
+  executionId: string,
+  snapshotId: string,
+  label?: string,
+): Promise<{ branchId: string; snapshotId: string }> {
+  return fetch(`/api/executions/${executionId}/step-back`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ snapshotId, label }),
+  }).then((res) => json(res));
+}
+
+export function listBranches(executionId: string): Promise<BranchRecord[]> {
+  return fetch(`/api/executions/${executionId}/branches`).then((res) => json(res));
 }
 
 export type ProviderKind = "mock" | "ollama" | "openai-compat";

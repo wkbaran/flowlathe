@@ -19,7 +19,7 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
   const hub = new ExecutionHub();
 
   registerFlowRoutes(app, { db: opts.db, hub, scheduler: opts.schedulerRegistry });
-  registerExecutionRoutes(app, opts.db, hub);
+  registerExecutionRoutes(app, { db: opts.db, hub, scheduler: opts.schedulerRegistry });
   registerProviderRoutes(app, {
     db: opts.db,
     credentialKey: opts.credentialKey,

@@ -34,12 +34,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   exportFlow,
+  getExecution,
   getFlow,
+  listBranches,
   listModels,
   listProviders,
   resumeExecution,
   runFlow,
   saveFlowGraph,
+  stepBack,
+  stepOnce,
+  stepStart,
+  type BranchRecord,
   type ModelRecord,
   type ProviderRecord,
 } from "../api.js";
@@ -58,6 +64,16 @@ interface SuspendedActivation {
   nodeId: string;
   prompt?: string | undefined;
   message?: string | undefined;
+}
+
+interface StepSession {
+  executionId: string;
+  currentBranchId: string;
+}
+
+interface HistoryEntry {
+  snapshotId: string;
+  nodeId: string;
 }
 
 const NODE_KIND_OPTIONS: NodeKind[] = ["prompt", "router", "merge", "pause", "userInput", "loop", "map"];
@@ -99,6 +115,9 @@ export function Canvas() {
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [suspended, setSuspended] = useState<SuspendedActivation[]>([]);
   const [resumeDraft, setResumeDraft] = useState<Record<string, string>>({});
+  const [stepSession, setStepSession] = useState<StepSession | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [branches, setBranches] = useState<BranchRecord[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -168,61 +187,112 @@ export function Canvas() {
     }
   }
 
+  function subscribeToExecution(execId: string) {
+    eventSourceRef.current?.close();
+    const source = new EventSource(`/api/executions/${execId}/events`);
+    eventSourceRef.current = source;
+
+    const onEvent = (kind: RunEvent["kind"]) => (raw: MessageEvent<string>) => {
+      const seq = Number(raw.lastEventId);
+      const event = JSON.parse(raw.data) as RunEvent;
+      setLog((prev) => [...prev, { seq, text: describeEvent(event) }]);
+      if (kind === "node_started") {
+        setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "running" }));
+      } else if (kind === "node_finished") {
+        setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "done" }));
+        setSuspended((prev) => prev.filter((s) => s.nodeId !== (event as { nodeId: string }).nodeId));
+      } else if (kind === "node_failed") {
+        setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "failed" }));
+      } else if (kind === "node_suspended") {
+        const e = event as Extract<RunEvent, { kind: "node_suspended" }>;
+        setNodeStatus((prev) => ({ ...prev, [e.nodeId]: "suspended" }));
+        setSuspended((prev) => [
+          ...prev,
+          {
+            activationKey: e.activationKey,
+            nodeId: e.nodeId,
+            prompt: e.reason.type === "user_input" ? e.reason.prompt : undefined,
+            message: e.reason.type === "pause" ? e.reason.message : undefined,
+          },
+        ]);
+      } else if (kind === "run_finished" || kind === "run_failed") {
+        source.close();
+      }
+    };
+
+    for (const kind of [
+      "node_started",
+      "token",
+      "node_finished",
+      "node_failed",
+      "node_suspended",
+      "run_finished",
+      "run_failed",
+    ] as const) {
+      source.addEventListener(kind, onEvent(kind) as EventListener);
+    }
+  }
+
   async function handleRun() {
     if (!flowId) return;
     setLog([]);
     setNodeStatus({});
     setSuspended([]);
+    setStepSession(null);
     try {
       await handleSave();
       const { executionId: newExecutionId } = await runFlow(flowId);
       setExecutionId(newExecutionId);
-      eventSourceRef.current?.close();
-      const source = new EventSource(`/api/executions/${newExecutionId}/events`);
-      eventSourceRef.current = source;
-
-      const onEvent = (kind: RunEvent["kind"]) => (raw: MessageEvent<string>) => {
-        const seq = Number(raw.lastEventId);
-        const event = JSON.parse(raw.data) as RunEvent;
-        setLog((prev) => [...prev, { seq, text: describeEvent(event) }]);
-        if (kind === "node_started") {
-          setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "running" }));
-        } else if (kind === "node_finished") {
-          setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "done" }));
-          setSuspended((prev) => prev.filter((s) => s.nodeId !== (event as { nodeId: string }).nodeId));
-        } else if (kind === "node_failed") {
-          setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "failed" }));
-        } else if (kind === "node_suspended") {
-          const e = event as Extract<RunEvent, { kind: "node_suspended" }>;
-          setNodeStatus((prev) => ({ ...prev, [e.nodeId]: "suspended" }));
-          setSuspended((prev) => [
-            ...prev,
-            {
-              activationKey: e.activationKey,
-              nodeId: e.nodeId,
-              prompt: e.reason.type === "user_input" ? e.reason.prompt : undefined,
-              message: e.reason.type === "pause" ? e.reason.message : undefined,
-            },
-          ]);
-        } else if (kind === "run_finished" || kind === "run_failed") {
-          source.close();
-        }
-      };
-
-      for (const kind of [
-        "node_started",
-        "token",
-        "node_finished",
-        "node_failed",
-        "node_suspended",
-        "run_finished",
-        "run_failed",
-      ] as const) {
-        source.addEventListener(kind, onEvent(kind) as EventListener);
-      }
+      subscribeToExecution(newExecutionId);
     } catch (err) {
       setLog((prev) => [...prev, { seq: prev.length + 1, text: `run failed to start: ${(err as Error).message}` }]);
     }
+  }
+
+  async function handleStep() {
+    if (!flowId) return;
+    try {
+      if (!stepSession) {
+        await handleSave();
+        setLog([]);
+        setNodeStatus({});
+        setSuspended([]);
+        const started = await stepStart(flowId);
+        setExecutionId(started.executionId);
+        subscribeToExecution(started.executionId);
+        setStepSession({ executionId: started.executionId, currentBranchId: started.branchId });
+        setBranches(await listBranches(started.executionId));
+        setHistory([]);
+        return;
+      }
+      const outcome = await stepOnce(stepSession.executionId, stepSession.currentBranchId);
+      if (!outcome.done && outcome.nodeId && outcome.snapshotId) {
+        setHistory((prev) => [...prev, { snapshotId: outcome.snapshotId!, nodeId: outcome.nodeId! }]);
+      }
+    } catch (err) {
+      setLog((prev) => [...prev, { seq: prev.length + 1, text: `step failed: ${(err as Error).message}` }]);
+    }
+  }
+
+  async function handleStepBack(snapshotId: string) {
+    if (!stepSession) return;
+    const forked = await stepBack(stepSession.executionId, snapshotId);
+    setStepSession({ executionId: stepSession.executionId, currentBranchId: forked.branchId });
+    setBranches(await listBranches(stepSession.executionId));
+    const cutIdx = history.findIndex((h) => h.snapshotId === snapshotId);
+    const truncated = cutIdx === -1 ? [] : history.slice(0, cutIdx + 1);
+    setHistory(truncated);
+    setNodeStatus(Object.fromEntries(truncated.map((h) => [h.nodeId, "done"])));
+    const status = await getExecution(stepSession.executionId, forked.branchId);
+    setLog(status.responses.map((r, i) => ({ seq: i, text: `${r.nodeId}: finished` })));
+  }
+
+  async function handleSwitchBranch(branchId: string) {
+    if (!stepSession) return;
+    setStepSession({ ...stepSession, currentBranchId: branchId });
+    setHistory([]);
+    const status = await getExecution(stepSession.executionId, branchId);
+    setLog(status.responses.map((r, i) => ({ seq: i, text: `${r.nodeId}: finished` })));
   }
 
   async function handleResume(activationKey: string) {
@@ -267,6 +337,9 @@ export function Canvas() {
           </Button>
           <Button variant="contained" onClick={handleRun}>
             Run
+          </Button>
+          <Button variant="contained" color="warning" onClick={() => void handleStep()}>
+            {stepSession ? "Step" : "Start Stepping"}
           </Button>
           <Button variant="outlined" color="inherit" onClick={handleExport}>
             Export
@@ -342,6 +415,53 @@ export function Canvas() {
                     </Box>
                   </Paper>
                 ))}
+              </Box>
+              <Divider />
+            </>
+          )}
+          {stepSession && (
+            <>
+              <Box sx={{ p: 2 }} data-testid="step-debug-panel">
+                <Typography variant="subtitle2">Step debugging</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  branch: {stepSession.currentBranchId.slice(0, 8)}
+                </Typography>
+                <List dense data-testid="step-history">
+                  {history.map((h) => (
+                    <ListItem
+                      key={h.snapshotId}
+                      secondaryAction={
+                        <Button size="small" onClick={() => void handleStepBack(h.snapshotId)}>
+                          Step back to here
+                        </Button>
+                      }
+                    >
+                      <ListItemText primary={h.nodeId} />
+                    </ListItem>
+                  ))}
+                </List>
+                {branches.length > 1 && (
+                  <>
+                    <Typography variant="caption" color="text.secondary">
+                      Branches
+                    </Typography>
+                    <List dense data-testid="branch-list">
+                      {branches.map((b) => (
+                        <ListItem key={b.id} disablePadding>
+                          <Button
+                            size="small"
+                            variant={b.id === stepSession.currentBranchId ? "contained" : "text"}
+                            onClick={() => void handleSwitchBranch(b.id)}
+                            data-testid={`branch-${b.id}`}
+                          >
+                            {b.id === stepSession.currentBranchId ? "● " : ""}
+                            {b.label ?? b.id.slice(0, 8)}
+                          </Button>
+                        </ListItem>
+                      ))}
+                    </List>
+                  </>
+                )}
               </Box>
               <Divider />
             </>

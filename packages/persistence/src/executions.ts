@@ -9,11 +9,11 @@ export interface StartedExecution {
   branchId: string;
 }
 
-export function startExecution(db: Db, flowVersionId: string): StartedExecution {
+export function startExecution(db: Db, flowVersionId: string, mode: "run" | "step" = "run"): StartedExecution {
   const executionId = randomUUID();
   const branchId = randomUUID();
   db.insert(executions)
-    .values({ id: executionId, flowVersionId, status: "running", mode: "run", rootBranchId: branchId })
+    .values({ id: executionId, flowVersionId, status: "running", mode, rootBranchId: branchId })
     .run();
   db.insert(branches).values({ id: branchId, executionId, parentBranchId: null }).run();
   return { executionId, branchId };
@@ -190,7 +190,10 @@ export interface ResponseLogRow {
   errorJson: unknown;
 }
 
-export function listResponses(db: Db, executionId: string): ResponseLogRow[] {
+export function listResponses(db: Db, executionId: string, branchId?: string): ResponseLogRow[] {
+  const where = branchId
+    ? and(eq(responses.executionId, executionId), eq(responses.branchId, branchId))
+    : eq(responses.executionId, executionId);
   return db
     .select({
       id: responses.id,
@@ -206,7 +209,7 @@ export function listResponses(db: Db, executionId: string): ResponseLogRow[] {
       errorJson: responses.errorJson,
     })
     .from(responses)
-    .where(eq(responses.executionId, executionId))
+    .where(where)
     .orderBy(asc(responses.createdAt))
     .all();
 }
