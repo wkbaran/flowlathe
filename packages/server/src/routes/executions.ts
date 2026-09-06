@@ -4,10 +4,12 @@ import {
   type Db,
   getExecution,
   getLatestGraphForFlowVersion,
+  getStateSnapshot,
   listBranches,
   listResponses,
   listRunEventsSince,
   listSnapshotsForBranch,
+  listStateLineage,
 } from "@flowlathe/persistence";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -47,6 +49,22 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     async (request, reply) => {
       if (!request.query.branchId) return reply.code(400).send({ error: "branchId query param is required" });
       return listSnapshotsForBranch(db, request.query.branchId);
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { branchId: string } }>(
+    "/api/executions/:id/state",
+    async (request, reply) => {
+      if (!request.query.branchId) return reply.code(400).send({ error: "branchId query param is required" });
+      return getStateSnapshot(db, request.query.branchId);
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { branchId: string } }>(
+    "/api/executions/:id/state-lineage",
+    async (request, reply) => {
+      if (!request.query.branchId) return reply.code(400).send({ error: "branchId query param is required" });
+      return listStateLineage(db, request.query.branchId);
     },
   );
 

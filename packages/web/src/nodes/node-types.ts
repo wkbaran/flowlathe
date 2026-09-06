@@ -1,4 +1,5 @@
 import {
+  ContextTransformNodeView,
   LoopNodeView,
   MapNodeView,
   MergeNodeView,
@@ -16,4 +17,5 @@ export const nodeTypes = {
   userInput: UserInputNodeView,
   loop: LoopNodeView,
   map: MapNodeView,
+  contextTransform: ContextTransformNodeView,
 };

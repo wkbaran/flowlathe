@@ -1,0 +1,151 @@
+import { randomUUID } from "node:crypto";
+import type { StateDecl } from "@flowlathe/core";
+import { asc, eq } from "drizzle-orm";
+import { getBlob, putBlob } from "./blobs.js";
+import type { Db } from "./db.js";
+import { stateDecls, stateReads, stateWrites, steps } from "./schema.js";
+
+export function saveStateDecls(db: Db, flowVersionId: string, decls: StateDecl[]): void {
+  for (const decl of decls) {
+    db.insert(stateDecls)
+      .values({
+        flowVersionId,
+        name: decl.name,
+        typeJson: decl.type,
+        merge: decl.merge,
+        initialJson: decl.initial ?? null,
+      })
+      .onConflictDoUpdate({
+        target: [stateDecls.flowVersionId, stateDecls.name],
+        set: { merge: decl.merge, typeJson: decl.type, initialJson: decl.initial ?? null },
+      })
+      .run();
+  }
+}
+
+export function getStateDecls(db: Db, flowVersionId: string): StateDecl[] {
+  return db
+    .select({ name: stateDecls.name, merge: stateDecls.merge, type: stateDecls.typeJson, initial: stateDecls.initialJson })
+    .from(stateDecls)
+    .where(eq(stateDecls.flowVersionId, flowVersionId))
+    .all()
+    .map((row) => ({
+      name: row.name,
+      merge: row.merge,
+      type: (row.type as StateDecl["type"]) ?? "string",
+      initial: row.initial ?? undefined,
+    }));
+}
+
+export interface RecordStateWriteInput {
+  branchId: string;
+  stepId?: string | undefined;
+  entry: string;
+  value: unknown;
+  merge: string;
+  seq: number;
+}
+
+export function recordStateWrite(db: Db, input: RecordStateWriteInput): void {
+  const valueSha = putBlob(db, Buffer.from(JSON.stringify(input.value), "utf-8"));
+  db.insert(stateWrites)
+    .values({
+      id: randomUUID(),
+      branchId: input.branchId,
+      stepId: input.stepId ?? null,
+      entry: input.entry,
+      valueSha,
+      mergeApplied: input.merge,
+      seq: input.seq,
+    })
+    .run();
+}
+
+export interface RecordStateReadInput {
+  branchId: string;
+  stepId?: string | undefined;
+  entry: string;
+  seqSeen: number;
+}
+
+export function recordStateRead(db: Db, input: RecordStateReadInput): void {
+  db.insert(stateReads)
+    .values({
+      id: randomUUID(),
+      branchId: input.branchId,
+      stepId: input.stepId ?? null,
+      entry: input.entry,
+      seqSeen: input.seqSeen,
+    })
+    .run();
+}
+
+export interface StateWriteRow {
+  entry: string;
+  value: unknown;
+  seq: number;
+}
+
+/**
+ * All writes recorded so far on `branchId`, in seq order — the replay log a step-mode
+ * StateStore resumes from. **v1 scope**: this reads only `branchId`'s own rows, not its parent
+ * branches — a step-back fork's state store starts empty rather than inheriting pre-fork writes
+ * (see CLAUDE.md). Port-value forking (Slice 4) has no such gap; state does, for now.
+ */
+export function listStateWritesForBranch(db: Db, branchId: string): StateWriteRow[] {
+  const rows = db
+    .select({ entry: stateWrites.entry, valueSha: stateWrites.valueSha, seq: stateWrites.seq })
+    .from(stateWrites)
+    .where(eq(stateWrites.branchId, branchId))
+    .orderBy(asc(stateWrites.seq))
+    .all();
+  return rows.map((row) => {
+    const bytes = getBlob(db, row.valueSha);
+    return { entry: row.entry, value: bytes ? JSON.parse(bytes.toString("utf-8")) : undefined, seq: row.seq };
+  });
+}
+
+/** Current value per entry on `branchId` — the last write wins (its value is already merged). */
+export function getStateSnapshot(db: Db, branchId: string): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const write of listStateWritesForBranch(db, branchId)) values[write.entry] = write.value;
+  return values;
+}
+
+export interface StateLineageEdge {
+  entry: string;
+  writerNodeId: string;
+  writerSeq: number;
+  readerNodeId: string;
+}
+
+/**
+ * The otherwise-invisible dependency between a node that writes a state entry and a node that
+ * later reads it — no graph edge connects them, so the canvas renders this as a dashed line
+ * instead. Resolves each write/read's owning node via `step_id -> steps.node_id`.
+ */
+export function listStateLineage(db: Db, branchId: string): StateLineageEdge[] {
+  const writeRows = db
+    .select({ entry: stateWrites.entry, seq: stateWrites.seq, stepId: stateWrites.stepId })
+    .from(stateWrites)
+    .where(eq(stateWrites.branchId, branchId))
+    .all();
+  const readRows = db
+    .select({ entry: stateReads.entry, seqSeen: stateReads.seqSeen, stepId: stateReads.stepId })
+    .from(stateReads)
+    .where(eq(stateReads.branchId, branchId))
+    .all();
+  const stepRows = db.select({ id: steps.id, nodeId: steps.nodeId }).from(steps).where(eq(steps.branchId, branchId)).all();
+  const nodeIdByStep = new Map(stepRows.map((s) => [s.id, s.nodeId]));
+
+  const edges: StateLineageEdge[] = [];
+  for (const read of readRows) {
+    const readerNodeId = read.stepId ? nodeIdByStep.get(read.stepId) : undefined;
+    if (!readerNodeId) continue;
+    const writer = writeRows.find((w) => w.entry === read.entry && w.seq === read.seqSeen);
+    const writerNodeId = writer?.stepId ? nodeIdByStep.get(writer.stepId) : undefined;
+    if (!writer || !writerNodeId) continue;
+    edges.push({ entry: read.entry, writerNodeId, writerSeq: writer.seq, readerNodeId });
+  }
+  return edges;
+}

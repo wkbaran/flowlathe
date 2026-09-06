@@ -34,7 +34,11 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   }
 
   const outerIds = new Set(outerNodes.map((n) => n.id));
-  const outerGraph: FlowGraph = { nodes: outerNodes, edges: graph.edges.filter((e) => outerIds.has(e.source) && outerIds.has(e.target)) };
+  const outerGraph: FlowGraph = {
+    nodes: outerNodes,
+    edges: graph.edges.filter((e) => outerIds.has(e.source) && outerIds.has(e.target)),
+    state: graph.state,
+  };
   const incoming = buildIncoming(outerGraph.edges);
   const hasOutgoing = new Set(outerGraph.edges.map((e) => e.source));
   const terminalNodeIds = outerNodes.map((n) => n.id).filter((id) => !hasOutgoing.has(id));
@@ -80,23 +84,30 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
     usedKinds.has("openai-compat") && "OpenAiCompatAdapter",
   ].filter(Boolean);
 
-  return `import { createRun, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
+  const stateDeclsLiteral = JSON.stringify(graph.state);
+
+  return `import type { RunEvent } from "@flowlathe/core";
+import { createRun, createStateStore, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
 import { SimpleScheduler${adapterImports.length ? `, ${adapterImports.join(", ")}` : ""} } from "@flowlathe/providers";
 
 const N = {
 ${specEntries}
 } as const;
 
+const STATE_DECLS = ${stateDeclsLiteral};
+
 async function main() {
   const scheduler = new SimpleScheduler({
 ${providerEntries}
   });
+  const emit = (event: RunEvent): void => console.log(JSON.stringify(event));
   const rt = createRun({
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
-      emit: (event) => console.log(JSON.stringify(event)),
+      emit,
       clock: { now: () => Date.now() },
+      state: createStateStore(emit, { decls: STATE_DECLS }),
       ...createSuspendRegistry(),
     },
   });
@@ -200,7 +211,7 @@ function emitLoopOrMap(
       const edge = incoming.get(node.id)?.get(port);
       if (!edge) throw new Error(`node "${node.id}" has no incoming edge bound to input "${port}"`);
       const sourceNode = { id: edge.source, type: "prompt" } as FlowNode; // kind only matters for accessor; init/items templates read plain values
-      return `${port}: ${accessorExpr(sourceNode, varName(edge.source), branchNodeIds.has(edge.source))}`;
+      return `${port}: ${accessorExpr(sourceNode, varName(edge.source), branchNodeIds.has(edge.source), edge.sourceHandle)}`;
     })
     .join(", ");
 
@@ -231,13 +242,16 @@ function callExpr(
       if (!edge) throw new Error(`node "${nodeId}" has no incoming edge bound to input "${port}"`);
       const sourceNode = nodesById.get(edge.source)!;
       const optional = branchNodeIds.has(edge.source);
-      return `${port}: ${accessorExpr(sourceNode, varName(edge.source), optional)}`;
+      return `${port}: ${accessorExpr(sourceNode, varName(edge.source), optional, edge.sourceHandle)}`;
     })
     .join(", ");
   return `await rt.${emitter.runtimeMethod}(N.${varName(nodeId)}, { ${bindings} })`;
 }
 
-function accessorExpr(sourceNode: FlowNode, varRef: string, optional: boolean): string {
+/** `sourceHandle` selects which field of the source node's result to read — defaults to
+ *  `"output"`, the conventional single-output-port name every existing node kind uses. A node
+ *  with more than one output port (e.g. ContextTransform's `output`/`context`) relies on this. */
+function accessorExpr(sourceNode: FlowNode, varRef: string, optional: boolean, sourceHandle = "output"): string {
   const dot = optional ? "?." : ".";
   switch (sourceNode.type) {
     case "loop":
@@ -247,7 +261,7 @@ function accessorExpr(sourceNode: FlowNode, varRef: string, optional: boolean): 
     case "router":
       return `${varRef}${dot}passthrough`;
     default:
-      return `${varRef}${dot}output`;
+      return `${varRef}${dot}${sourceHandle}`;
   }
 }
 

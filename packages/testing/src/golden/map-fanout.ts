@@ -18,6 +18,7 @@ export const mapFanoutGraph: FlowGraph = {
     },
   ],
   edges: [],
+  state: [],
 };
 
 export const mapFanoutResponses = new Map([

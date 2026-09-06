@@ -10,6 +10,7 @@ function fakeCtx(): RuntimeHost {
     clock: { now: () => 0 },
     suspend: () => new Promise(() => undefined),
     resolveSuspended: () => undefined,
+    state: { read: () => undefined, write: () => undefined },
   };
 }
 

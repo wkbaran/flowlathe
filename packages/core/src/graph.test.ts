@@ -24,6 +24,6 @@ describe("FlowGraph", () => {
       ],
       edges: [{ id: "a-b", source: "a", target: "b" }],
     };
-    expect(parseFlowGraph(graph)).toEqual(graph);
+    expect(parseFlowGraph(graph)).toEqual({ ...graph, state: [] });
   });
 });

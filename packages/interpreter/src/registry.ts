@@ -1,4 +1,5 @@
 import { extractTemplateVars, type NodeKind } from "@flowlathe/core";
+import { type ContextTransformSpec, ContextTransformNodeDataSchema } from "@flowlathe/node-context-transform";
 import { LoopNodeDataSchema } from "@flowlathe/node-loop";
 import { MapNodeDataSchema } from "@flowlathe/node-map";
 import { type MergeSpec, MergeNodeDataSchema } from "@flowlathe/node-merge";
@@ -72,5 +73,24 @@ export const registry: Record<NodeKind, NodeDescriptor> = {
     inputPorts: (spec) =>
       extractTemplateVars((spec as { itemsTemplate: string }).itemsTemplate).map((name) => ({ name, required: true })),
     outputPorts: () => ["results"],
+  },
+  contextTransform: {
+    schema: ContextTransformNodeDataSchema,
+    inputPorts: (spec) => {
+      const s = spec as ContextTransformSpec;
+      const templateVars =
+        s.transformKind === "append"
+          ? extractTemplateVars(s.appendTemplate ?? "")
+          : s.transformKind === "summarize"
+            ? extractTemplateVars(s.summarizeTemplate ?? "")
+            : [];
+      const varPorts = templateVars.map((name) => ({ name, required: true }));
+      return s.startsNewContext ? varPorts : [{ name: "context", required: true }, ...varPorts];
+    },
+    outputPorts: () => ["output", "context"],
+    dispatch: async (run, spec, inputs) => {
+      const result = await run.contextTransform(spec as ContextTransformSpec, inputs);
+      return { output: result.output, context: result.context };
+    },
   },
 };

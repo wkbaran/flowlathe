@@ -7,6 +7,7 @@ export const fanOutGraph: FlowGraph = {
     { id: "b", type: "prompt", position: { x: 0, y: 1 }, data: { template: "b-prompt", providerId: "mock", modelId: "m" } },
   ],
   edges: [],
+  state: [],
 };
 
 export const fanOutResponses = new Map([

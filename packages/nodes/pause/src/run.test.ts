@@ -17,6 +17,7 @@ describe("runPause", () => {
           resolvePending = resolve;
         }),
       resolveSuspended: () => undefined,
+      state: { read: () => undefined, write: () => undefined },
     };
 
     const promise = runPause(ctx, { id: "p", message: "hold on" }, { input: "carried-value" });

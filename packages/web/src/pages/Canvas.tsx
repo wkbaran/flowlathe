@@ -1,12 +1,14 @@
-import type { FlowEdge, FlowNode, NodeKind, RunEvent } from "@flowlathe/core";
+import type { FlowEdge, FlowNode, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
 import {
   AppBar,
   Box,
   Button,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogTitle,
   Divider,
+  FormControlLabel,
   List,
   ListItem,
   ListItemText,
@@ -35,7 +37,9 @@ import { useParams } from "react-router-dom";
 import {
   exportFlow,
   getExecution,
+  getExecutionState,
   getFlow,
+  getStateLineage,
   listBranches,
   listModels,
   listProviders,
@@ -48,6 +52,7 @@ import {
   type BranchRecord,
   type ModelRecord,
   type ProviderRecord,
+  type StateLineageEdge,
 } from "../api.js";
 import type { NodeStatus } from "../nodes/NodeCard.js";
 import { nodeTypes } from "../nodes/node-types.js";
@@ -76,12 +81,21 @@ interface HistoryEntry {
   nodeId: string;
 }
 
-const NODE_KIND_OPTIONS: NodeKind[] = ["prompt", "router", "merge", "pause", "userInput", "loop", "map"];
+const NODE_KIND_OPTIONS: NodeKind[] = [
+  "prompt",
+  "router",
+  "merge",
+  "pause",
+  "userInput",
+  "loop",
+  "map",
+  "contextTransform",
+];
 
 function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
   switch (type) {
     case "prompt":
-      return { label: id, template: "", providerId: "mock", modelId: "mock" };
+      return { label: id, template: "", providerId: "mock", modelId: "mock", enableStateTools: false };
     case "router":
       return { label: id, routes: ["a", "b"], cases: [{ value: "a", route: "a" }], defaultRoute: "b" };
     case "merge":
@@ -94,6 +108,8 @@ function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
       return { label: id, initTemplate: "0", accPortName: "acc", stopValue: "done", maxIterations: 5 };
     case "map":
       return { label: id, itemsTemplate: '["a","b","c"]', itemPortName: "item", maxConcurrency: 3, maxItems: 10 };
+    case "contextTransform":
+      return { label: id, transformKind: "append", startsNewContext: false, appendRole: "user", appendTemplate: "" };
   }
 }
 
@@ -118,6 +134,9 @@ export function Canvas() {
   const [stepSession, setStepSession] = useState<StepSession | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [branches, setBranches] = useState<BranchRecord[]>([]);
+  const [stateDecls, setStateDecls] = useState<StateDecl[]>([]);
+  const [stateValues, setStateValues] = useState<Record<string, unknown>>({});
+  const [stateLineage, setStateLineage] = useState<StateLineageEdge[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -127,6 +146,7 @@ export function Canvas() {
       setVersion(flow.version);
       setNodes(flow.graph.nodes as Node[]);
       setEdges(flow.graph.edges as Edge[]);
+      setStateDecls(flow.graph.state ?? []);
     });
   }, [flowId, setNodes, setEdges]);
 
@@ -173,6 +193,18 @@ export function Canvas() {
     );
   }
 
+  function addStateDecl() {
+    setStateDecls((prev) => [...prev, { name: `entry${prev.length + 1}`, type: "string", merge: "replace" }]);
+  }
+
+  function updateStateDecl(index: number, patch: Partial<StateDecl>) {
+    setStateDecls((prev) => prev.map((d, i) => (i === index ? { ...d, ...patch } : d)));
+  }
+
+  function removeStateDecl(index: number) {
+    setStateDecls((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function handleSave() {
     if (!flowId) return;
     setSaving(true);
@@ -180,6 +212,7 @@ export function Canvas() {
       const saved = await saveFlowGraph(flowId, {
         nodes: nodes as FlowNode[],
         edges: edges as FlowEdge[],
+        state: stateDecls,
       });
       setVersion(saved.version);
     } finally {
@@ -187,7 +220,12 @@ export function Canvas() {
     }
   }
 
-  function subscribeToExecution(execId: string) {
+  function refreshState(execId: string, branchId: string) {
+    getExecutionState(execId, branchId).then(setStateValues);
+    getStateLineage(execId, branchId).then(setStateLineage);
+  }
+
+  function subscribeToExecution(execId: string, branchId: string) {
     eventSourceRef.current?.close();
     const source = new EventSource(`/api/executions/${execId}/events`);
     eventSourceRef.current = source;
@@ -217,6 +255,9 @@ export function Canvas() {
         ]);
       } else if (kind === "run_finished" || kind === "run_failed") {
         source.close();
+        refreshState(execId, branchId);
+      } else if (kind === "state_write" || kind === "state_read") {
+        refreshState(execId, branchId);
       }
     };
 
@@ -226,6 +267,9 @@ export function Canvas() {
       "node_finished",
       "node_failed",
       "node_suspended",
+      "state_write",
+      "state_read",
+      "context_transform",
       "run_finished",
       "run_failed",
     ] as const) {
@@ -239,11 +283,13 @@ export function Canvas() {
     setNodeStatus({});
     setSuspended([]);
     setStepSession(null);
+    setStateValues({});
+    setStateLineage([]);
     try {
       await handleSave();
-      const { executionId: newExecutionId } = await runFlow(flowId);
+      const { executionId: newExecutionId, branchId } = await runFlow(flowId);
       setExecutionId(newExecutionId);
-      subscribeToExecution(newExecutionId);
+      subscribeToExecution(newExecutionId, branchId);
     } catch (err) {
       setLog((prev) => [...prev, { seq: prev.length + 1, text: `run failed to start: ${(err as Error).message}` }]);
     }
@@ -259,16 +305,19 @@ export function Canvas() {
         setSuspended([]);
         const started = await stepStart(flowId);
         setExecutionId(started.executionId);
-        subscribeToExecution(started.executionId);
+        subscribeToExecution(started.executionId, started.branchId);
         setStepSession({ executionId: started.executionId, currentBranchId: started.branchId });
         setBranches(await listBranches(started.executionId));
         setHistory([]);
+        setStateValues({});
+        setStateLineage([]);
         return;
       }
       const outcome = await stepOnce(stepSession.executionId, stepSession.currentBranchId);
       if (!outcome.done && outcome.nodeId && outcome.snapshotId) {
         setHistory((prev) => [...prev, { snapshotId: outcome.snapshotId!, nodeId: outcome.nodeId! }]);
       }
+      refreshState(stepSession.executionId, stepSession.currentBranchId);
     } catch (err) {
       setLog((prev) => [...prev, { seq: prev.length + 1, text: `step failed: ${(err as Error).message}` }]);
     }
@@ -285,6 +334,7 @@ export function Canvas() {
     setNodeStatus(Object.fromEntries(truncated.map((h) => [h.nodeId, "done"])));
     const status = await getExecution(stepSession.executionId, forked.branchId);
     setLog(status.responses.map((r, i) => ({ seq: i, text: `${r.nodeId}: finished` })));
+    refreshState(stepSession.executionId, forked.branchId);
   }
 
   async function handleSwitchBranch(branchId: string) {
@@ -293,6 +343,7 @@ export function Canvas() {
     setHistory([]);
     const status = await getExecution(stepSession.executionId, branchId);
     setLog(status.responses.map((r, i) => ({ seq: i, text: `${r.nodeId}: finished` })));
+    refreshState(stepSession.executionId, branchId);
   }
 
   async function handleResume(activationKey: string) {
@@ -308,6 +359,20 @@ export function Canvas() {
 
   const decoratedNodes = nodes.map((n) => ({ ...n, data: { ...n.data, status: nodeStatus[n.id] ?? "idle" } }));
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
+
+  // State reads/writes have no graph edge between the writer and reader node — render the
+  // observed dependency as a dashed "lineage" line so it's not an invisible footgun (PLAN.md
+  // design trap #3). These are purely visual: never part of the saved graph.
+  const lineageEdges: Edge[] = stateLineage.map((l, i) => ({
+    id: `lineage-${l.entry}-${l.writerNodeId}-${l.readerNodeId}-${i}`,
+    source: l.writerNodeId,
+    target: l.readerNodeId,
+    label: `state: ${l.entry}`,
+    style: { strokeDasharray: "6 4", stroke: theme.palette.warning.main },
+    animated: false,
+    data: { kind: "state-lineage" },
+  }));
+  const decoratedEdges = [...edges, ...lineageEdges];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -362,7 +427,7 @@ export function Canvas() {
         <div style={{ flexGrow: 1 }}>
           <ReactFlow
             nodes={decoratedNodes}
-            edges={edges}
+            edges={decoratedEdges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -393,6 +458,64 @@ export function Canvas() {
                 Select a node to edit it.
               </Typography>
             )}
+          </Box>
+          <Divider />
+          <Box sx={{ p: 2 }} data-testid="state-panel">
+            <Typography variant="subtitle2">State</Typography>
+            <List dense data-testid="state-decl-list">
+              {stateDecls.map((decl, i) => (
+                <ListItem
+                  key={i}
+                  disablePadding
+                  sx={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 0.5, mb: 1 }}
+                >
+                  <Box sx={{ display: "flex", gap: 0.5 }}>
+                    <TextField
+                      size="small"
+                      label="Name"
+                      value={decl.name}
+                      onChange={(e) => updateStateDecl(i, { name: e.target.value })}
+                      slotProps={{ htmlInput: { "aria-label": `State entry ${i} name` } }}
+                    />
+                    <Select
+                      size="small"
+                      value={decl.merge}
+                      onChange={(e) => updateStateDecl(i, { merge: e.target.value as MergeRule })}
+                      inputProps={{ "aria-label": `State entry ${i} merge rule` }}
+                    >
+                      {(["replace", "append", "numeric-add", "set-union", "error-on-conflict"] as MergeRule[]).map((m) => (
+                        <MenuItem key={m} value={m}>
+                          {m}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <Select
+                      size="small"
+                      value={decl.type}
+                      onChange={(e) => updateStateDecl(i, { type: e.target.value as StateValueType })}
+                      inputProps={{ "aria-label": `State entry ${i} type` }}
+                    >
+                      {(["string", "number", "boolean", "array", "object"] as StateValueType[]).map((t) => (
+                        <MenuItem key={t} value={t}>
+                          {t}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <Button size="small" onClick={() => removeStateDecl(i)}>
+                      Remove
+                    </Button>
+                  </Box>
+                  {stateValues[decl.name] !== undefined && (
+                    <Typography variant="caption" color="text.secondary">
+                      current: {JSON.stringify(stateValues[decl.name])}
+                    </Typography>
+                  )}
+                </ListItem>
+              ))}
+            </List>
+            <Button size="small" onClick={addStateDecl}>
+              Add state entry
+            </Button>
           </Box>
           <Divider />
           {suspended.length > 0 && (
@@ -541,6 +664,16 @@ function NodeProperties(props: {
               </MenuItem>
             ))}
           </Select>
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={(data["enableStateTools"] as boolean) ?? false}
+                onChange={(e) => onChange({ enableStateTools: e.target.checked })}
+              />
+            }
+            label="Enable read_state/write_state tool"
+          />
         </>
       )}
 
@@ -660,6 +793,124 @@ function NodeProperties(props: {
         </>
       )}
 
+      {type === "contextTransform" && (
+        <>
+          <Select
+            size="small"
+            value={(data["transformKind"] as string) ?? "append"}
+            onChange={(e) => onChange({ transformKind: e.target.value })}
+            inputProps={{ "aria-label": "Transform kind" }}
+          >
+            <MenuItem value="append">append</MenuItem>
+            <MenuItem value="drop-before">drop-before</MenuItem>
+            <MenuItem value="filter-role">filter-role</MenuItem>
+            <MenuItem value="summarize">summarize</MenuItem>
+          </Select>
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={(data["startsNewContext"] as boolean) ?? false}
+                onChange={(e) => onChange({ startsNewContext: e.target.checked })}
+              />
+            }
+            label="Starts a new context (no incoming context edge)"
+          />
+
+          {data["transformKind"] === "append" && (
+            <>
+              <Select
+                size="small"
+                value={(data["appendRole"] as string) ?? "user"}
+                onChange={(e) => onChange({ appendRole: e.target.value })}
+                inputProps={{ "aria-label": "Append role" }}
+              >
+                {["system", "user", "assistant", "thinking", "tool"].map((role) => (
+                  <MenuItem key={role} value={role}>
+                    {role}
+                  </MenuItem>
+                ))}
+              </Select>
+              <TextField
+                size="small"
+                label="Append template"
+                multiline
+                minRows={2}
+                value={(data["appendTemplate"] as string) ?? ""}
+                onChange={(e) => onChange({ appendTemplate: e.target.value })}
+              />
+            </>
+          )}
+
+          {data["transformKind"] === "drop-before" && (
+            <TextField
+              size="small"
+              type="number"
+              label="Keep from index"
+              value={(data["keepFromIndex"] as number) ?? 0}
+              onChange={(e) => onChange({ keepFromIndex: Number(e.target.value) })}
+            />
+          )}
+
+          {data["transformKind"] === "filter-role" && (
+            <TextField
+              size="small"
+              label="Exclude roles (comma-separated)"
+              value={((data["excludeRoles"] as string[]) ?? []).join(",")}
+              onChange={(e) =>
+                onChange({ excludeRoles: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })
+              }
+            />
+          )}
+
+          {data["transformKind"] === "summarize" && (
+            <>
+              <TextField
+                size="small"
+                type="number"
+                label="Summarize before index"
+                value={(data["summarizeBeforeIndex"] as number) ?? 0}
+                onChange={(e) => onChange({ summarizeBeforeIndex: Number(e.target.value) })}
+              />
+              <TextField
+                size="small"
+                label="Summarize prompt template"
+                multiline
+                minRows={2}
+                value={(data["summarizeTemplate"] as string) ?? ""}
+                onChange={(e) => onChange({ summarizeTemplate: e.target.value })}
+              />
+              <Select
+                size="small"
+                displayEmpty
+                value={(data["providerId"] as string) ?? ""}
+                onChange={(e) => onChange({ providerId: e.target.value, modelId: "" })}
+                inputProps={{ "aria-label": "Summarize provider" }}
+              >
+                {providers.map((p) => (
+                  <MenuItem key={p.id} value={p.id}>
+                    {p.name}
+                  </MenuItem>
+                ))}
+              </Select>
+              <Select
+                size="small"
+                displayEmpty
+                value={(data["modelId"] as string) ?? ""}
+                onChange={(e) => onChange({ modelId: e.target.value })}
+                inputProps={{ "aria-label": "Summarize model" }}
+              >
+                {(modelsByProvider[data["providerId"] as string] ?? []).map((m) => (
+                  <MenuItem key={m.id} value={m.modelName}>
+                    {m.modelName}
+                  </MenuItem>
+                ))}
+              </Select>
+            </>
+          )}
+        </>
+      )}
+
       <Divider sx={{ my: 1 }} />
       <Select
         size="small"
@@ -693,6 +944,12 @@ function describeEvent(event: RunEvent): string {
       return `${event.nodeId}: failed (${event.error})`;
     case "node_suspended":
       return `${event.nodeId}: suspended (${event.reason.type})`;
+    case "state_write":
+      return `state[${event.entry}] <- ${JSON.stringify(event.value)} (${event.merge}${event.viaTool ? ", via tool" : ""})`;
+    case "state_read":
+      return `state[${event.entry}] read (seq ${event.seqSeen}${event.viaTool ? ", via tool" : ""})`;
+    case "context_transform":
+      return `${event.nodeId}: context ${event.transformKind} (${event.sourceMessages.length} -> ${event.resultMessages.length} messages)`;
     case "run_finished":
       return `run finished`;
     case "run_failed":

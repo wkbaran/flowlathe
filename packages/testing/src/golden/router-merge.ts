@@ -29,6 +29,7 @@ export const routerMergeGraph: FlowGraph = {
     { id: "e3", source: "codeAnswer", target: "merge", targetHandle: "in1" },
     { id: "e4", source: "proseAnswer", target: "merge", targetHandle: "in2" },
   ],
+  state: [],
 };
 
 export const routerMergeResponses = new Map([

@@ -1,4 +1,5 @@
-import { renderTemplate, type PromptResult, type RuntimeHost } from "@flowlathe/core";
+import { renderTemplate, type PromptResult, type RuntimeHost, type StateStore } from "@flowlathe/core";
+import { type ContextTransformResult, type ContextTransformSpec, runContextTransform } from "@flowlathe/node-context-transform";
 import { type LoopSpec } from "@flowlathe/node-loop";
 import { type MapSpec } from "@flowlathe/node-map";
 import { type MergeResult, type MergeSpec, runMerge } from "@flowlathe/node-merge";
@@ -9,11 +10,13 @@ import { type UserInputResult, type UserInputSpec, runUserInput } from "@flowlat
 import { loopUntil, mapConcurrent } from "./combinators.js";
 
 export interface Run {
+  readonly state: StateStore;
   prompt(spec: PromptSpec, inputs: Record<string, string>): Promise<PromptResult>;
   route(spec: RouterSpec, inputs: Record<string, string>): Promise<RouterResult>;
   merge(spec: MergeSpec, inputs: Record<string, string | undefined>): Promise<MergeResult>;
   pause(spec: PauseSpec, inputs: Record<string, string>): Promise<PauseResult>;
   userInput(spec: UserInputSpec): Promise<UserInputResult>;
+  contextTransform(spec: ContextTransformSpec, inputs: Record<string, string>): Promise<ContextTransformResult>;
   loop(
     spec: LoopSpec,
     inputs: Record<string, string>,
@@ -31,11 +34,13 @@ export interface CreateRunOptions {
 export function createRun(opts: CreateRunOptions): Run {
   const host = opts.host;
   return {
+    state: host.state,
     prompt: (spec, inputs) => runPrompt(host, spec, inputs),
     route: (spec, inputs) => runRouter(host, spec, inputs),
     merge: (spec, inputs) => runMerge(host, spec, inputs),
     pause: (spec, inputs) => runPause(host, spec, inputs),
     userInput: (spec) => runUserInput(host, spec),
+    contextTransform: (spec, inputs) => runContextTransform(host, spec, inputs),
 
     loop: async (spec, inputs, body) => {
       const init = renderTemplate(spec.initTemplate, inputs);

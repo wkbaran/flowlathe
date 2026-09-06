@@ -70,3 +70,18 @@ export function MapNodeView({ id, data }: NodeProps) {
   const nodeData = data as BaseData;
   return <NodeCard id={id} status={nodeData.status ?? "idle"} label={nodeData.label ?? id} />;
 }
+
+interface ContextTransformData extends BaseData {
+  startsNewContext?: boolean;
+}
+
+export function ContextTransformNodeView({ id, data }: NodeProps) {
+  const nodeData = data as ContextTransformData;
+  return (
+    <NodeCard id={id} status={nodeData.status ?? "idle"} label={nodeData.label ?? id}>
+      {!nodeData.startsNewContext && <Handle type="target" position={Position.Left} id="context" />}
+      <Handle type="source" position={Position.Right} id="output" style={{ top: "35%" }} />
+      <Handle type="source" position={Position.Right} id="context" style={{ top: "65%" }} />
+    </NodeCard>
+  );
+}

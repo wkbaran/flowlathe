@@ -12,6 +12,7 @@ export const twoNodeChainGraph: FlowGraph = {
     },
   ],
   edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
+  state: [],
 };
 
 export const twoNodeChainResponses = new Map([

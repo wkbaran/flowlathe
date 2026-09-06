@@ -30,6 +30,7 @@ describe("flow repository", () => {
     const graph: FlowGraph = {
       nodes: [{ id: "a", type: "prompt", position: { x: 1, y: 2 }, data: {} }],
       edges: [],
+      state: [],
     };
     const saved = saveFlowVersion(opened.db, created.id, graph);
     expect(saved.version).toBe(2);

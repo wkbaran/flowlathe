@@ -1,6 +1,6 @@
 import type { FlowGraph, RunEvent } from "@flowlathe/core";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
-import { createRun, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
+import { createRun, createStateStore, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
 import { describe, expect, it } from "vitest";
 import { runGraph } from "./run-graph.js";
 
@@ -8,16 +8,24 @@ function node(id: string, type: string, data: Record<string, unknown>, parentId?
   return { id, type: type as never, position: { x: 0, y: 0 }, data, ...(parentId ? { parentId } : {}) };
 }
 
+function noopState() {
+  return createStateStore(() => undefined, { decls: [] });
+}
+
 function makeRun(): { run: ReturnType<typeof createRun>; events: RunEvent[]; host: ReturnType<typeof createSuspendRegistry> } {
   const events: RunEvent[] = [];
+  const emit = (e: RunEvent): void => {
+    events.push(e);
+  };
   const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
   const suspendRegistry = createSuspendRegistry();
   const run = createRun({
     host: {
       scheduler,
       blobs: new InMemoryBlobStore(),
-      emit: (e) => events.push(e),
+      emit,
       clock: { now: () => 0 },
+      state: createStateStore(emit, { decls: [] }),
       ...suspendRegistry,
     },
   });
@@ -32,6 +40,7 @@ describe("runGraph — linear chains", () => {
     const graph: FlowGraph = {
       nodes: [node("a", "prompt", promptData("start")), node("b", "prompt", promptData("next: {{input}}"))],
       edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
+      state: [],
     };
     const { outputs } = await runGraph({ graph, run });
     expect(outputs["a"]).toBe("[mock:m] start");
@@ -46,6 +55,7 @@ describe("runGraph — linear chains", () => {
         { id: "a-b", source: "a", target: "b", targetHandle: "input" },
         { id: "b-a", source: "b", target: "a", targetHandle: "input" },
       ],
+      state: [],
     };
     await expect(runGraph({ graph, run })).rejects.toThrow(/cycle/);
   });
@@ -56,7 +66,7 @@ function identityRun(): ReturnType<typeof createRun> {
     mock: { adapter: { kind: "identity", call: async (req: { prompt: string }) => ({ content: req.prompt, finishReason: "stop" }) }, maxParallel: 8 },
   });
   return createRun({
-    host: { scheduler, blobs: new InMemoryBlobStore(), emit: () => undefined, clock: { now: () => 0 }, ...createSuspendRegistry() },
+    host: { scheduler, blobs: new InMemoryBlobStore(), emit: () => undefined, clock: { now: () => 0 }, state: noopState(), ...createSuspendRegistry() },
   });
 }
 
@@ -83,6 +93,7 @@ describe("runGraph — router + merge (fan-out/join)", () => {
         { id: "e3", source: "codeAnswer", target: "merge", targetHandle: "in1" },
         { id: "e4", source: "proseAnswer", target: "merge", targetHandle: "in2" },
       ],
+      state: [],
     };
   }
 
@@ -111,6 +122,7 @@ describe("runGraph — router + merge (fan-out/join)", () => {
         { id: "e0", source: "seed", target: "router", targetHandle: "input" },
         { id: "e1", source: "router", target: "onlyIfA", sourceHandle: "a", targetHandle: "x" },
       ],
+      state: [],
     };
     const { outputs } = await runGraph({ graph, run: identityRun() });
     // "neither" doesn't match case "a" -> defaultRoute "b" taken -> onlyIfA's port stays never -> skipped
@@ -138,7 +150,14 @@ describe("runGraph — fan-out concurrency", () => {
     };
     const scheduler = new SimpleScheduler({ mock: { adapter, maxParallel: 8 } });
     const run = createRun({
-      host: { scheduler, blobs: new InMemoryBlobStore(), emit: () => undefined, clock: { now: () => 0 }, ...createSuspendRegistry() },
+      host: {
+        scheduler,
+        blobs: new InMemoryBlobStore(),
+        emit: () => undefined,
+        clock: { now: () => 0 },
+        state: noopState(),
+        ...createSuspendRegistry(),
+      },
     });
 
     const graph: FlowGraph = {
@@ -152,6 +171,7 @@ describe("runGraph — fan-out concurrency", () => {
         { id: "e1", source: "a", target: "join", targetHandle: "in1" },
         { id: "e2", source: "b", target: "join", targetHandle: "in2" },
       ],
+      state: [],
     };
     const { outputs } = await runGraph({ graph, run });
     // all 3 must have STARTED before any of them finished -> genuine concurrency, not serial
@@ -167,6 +187,7 @@ describe("runGraph — pause / user input suspend-resume", () => {
     const graph: FlowGraph = {
       nodes: [node("a", "prompt", promptData("start")), node("p", "pause", { message: "hold" })],
       edges: [{ id: "e1", source: "a", target: "p", targetHandle: "input" }],
+      state: [],
     };
     const resultPromise = runGraph({ graph, run });
     await new Promise((r) => setImmediate(r));
@@ -180,6 +201,7 @@ describe("runGraph — pause / user input suspend-resume", () => {
     const graph: FlowGraph = {
       nodes: [node("u", "userInput", { prompt: "What's your name?" })],
       edges: [],
+      state: [],
     };
     const resultPromise = runGraph({ graph, run });
     await new Promise((r) => setImmediate(r));
@@ -197,6 +219,7 @@ describe("runGraph — loop", () => {
         node("body", "prompt", promptData("{{acc}}"), "l"),
       ],
       edges: [],
+      state: [],
     };
     // the shared mock adapter prefixes "[mock:m] ", which would never converge on a numeric
     // stopValue -- use a custom incrementing adapter instead so the loop can actually terminate.
@@ -215,6 +238,7 @@ describe("runGraph — loop", () => {
         blobs: new InMemoryBlobStore(),
         emit: () => undefined,
         clock: { now: () => 0 },
+        state: noopState(),
         ...createSuspendRegistry(),
       },
     });
@@ -230,6 +254,7 @@ describe("runGraph — loop", () => {
         node("body", "prompt", promptData("{{acc}}"), "l"),
       ],
       edges: [],
+      state: [],
     };
     await expect(runGraph({ graph, run })).rejects.toThrow(/maxIterations/);
   });
@@ -244,6 +269,7 @@ describe("runGraph — map", () => {
         node("body", "prompt", promptData("got: {{item}}"), "m"),
       ],
       edges: [],
+      state: [],
     };
     const { outputs } = await runGraph({ graph, run });
     expect(JSON.parse(outputs["m"]!)).toEqual([

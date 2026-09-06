@@ -9,6 +9,7 @@ import {
   getBranch,
   getSnapshot,
   listSnapshotsForBranch,
+  listStateWritesForBranch,
   putBlob,
   startExecution,
 } from "@flowlathe/persistence";
@@ -91,7 +92,15 @@ export async function stepOnce(opts: StepOnceOptions): Promise<StepOutcome> {
   const { db, hub, scheduler, graph, executionId, branchId } = opts;
   const latest = latestSnapshot(db, branchId);
 
-  const { run, resolveSuspended, emit } = buildHostAndRun({ db, hub, scheduler, executionId, branchId });
+  const { run, resolveSuspended, emit } = buildHostAndRun({
+    db,
+    hub,
+    scheduler,
+    executionId,
+    branchId,
+    stateDecls: graph.state,
+    stateReplay: listStateWritesForBranch(db, branchId),
+  });
   hub.registerResolver(executionId, resolveSuspended);
   try {
     const engine = GraphEngine.restore(graph, run, deserializeSnapshot(db, latest.payload));

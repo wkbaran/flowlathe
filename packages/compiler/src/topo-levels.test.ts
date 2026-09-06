@@ -11,12 +11,13 @@ describe("topoLevels", () => {
     const graph: FlowGraph = {
       nodes: [node("a"), node("b")],
       edges: [{ id: "a-b", source: "a", target: "b" }],
+      state: [],
     };
     expect(topoLevels(graph)).toEqual([["a"], ["b"]]);
   });
 
   it("groups independent nodes into the same level", () => {
-    const graph: FlowGraph = { nodes: [node("a"), node("b")], edges: [] };
+    const graph: FlowGraph = { nodes: [node("a"), node("b")], edges: [], state: [] };
     const levels = topoLevels(graph);
     expect(levels).toHaveLength(1);
     expect(levels[0]).toEqual(expect.arrayContaining(["a", "b"]));
@@ -29,6 +30,7 @@ describe("topoLevels", () => {
         { id: "a-b", source: "a", target: "b" },
         { id: "b-a", source: "b", target: "a" },
       ],
+      state: [],
     };
     expect(() => topoLevels(graph)).toThrow(/cycle/);
   });

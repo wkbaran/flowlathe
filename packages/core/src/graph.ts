@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { NODE_KINDS } from "./node-kind.js";
+import { StateDeclSchema } from "./state.js";
 
 export const PositionSchema = z.object({
   x: z.number(),
@@ -26,6 +27,8 @@ export const FlowEdgeSchema = z.object({
 export const FlowGraphSchema = z.object({
   nodes: z.array(FlowNodeSchema),
   edges: z.array(FlowEdgeSchema),
+  /** Flow-level named state declarations — merge rules live here, not on any single node. */
+  state: z.array(StateDeclSchema).default([]),
 });
 
 export type Position = z.infer<typeof PositionSchema>;
@@ -34,7 +37,7 @@ export type FlowEdge = z.infer<typeof FlowEdgeSchema>;
 export type FlowGraph = z.infer<typeof FlowGraphSchema>;
 
 export function emptyFlowGraph(): FlowGraph {
-  return { nodes: [], edges: [] };
+  return { nodes: [], edges: [], state: [] };
 }
 
 export function parseFlowGraph(value: unknown): FlowGraph {

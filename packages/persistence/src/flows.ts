@@ -3,6 +3,7 @@ import type { FlowGraph } from "@flowlathe/core";
 import { desc, eq, sql } from "drizzle-orm";
 import type { Db } from "./db.js";
 import { flowVersions, flows } from "./schema.js";
+import { saveStateDecls } from "./state.js";
 
 export interface FlowSummary {
   id: string;
@@ -25,6 +26,7 @@ export function createFlow(db: Db, name: string, graph: FlowGraph): FlowWithGrap
   db.insert(flowVersions)
     .values({ id: flowVersionId, flowId: id, version, graphJson: graph })
     .run();
+  saveStateDecls(db, flowVersionId, graph.state);
   const row = mustGetFlowRow(db, id);
   return { ...row, flowVersionId, version, graph };
 }
@@ -83,6 +85,7 @@ export function saveFlowVersion(db: Db, flowId: string, graph: FlowGraph): FlowW
   db.insert(flowVersions)
     .values({ id: flowVersionId, flowId, version, graphJson: graph })
     .run();
+  saveStateDecls(db, flowVersionId, graph.state);
   db.update(flows)
     .set({ updatedAt: sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))` })
     .where(eq(flows.id, flowId))

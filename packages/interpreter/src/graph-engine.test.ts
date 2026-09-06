@@ -1,6 +1,6 @@
 import type { FlowGraph } from "@flowlathe/core";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
-import { createRun, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
+import { createRun, createStateStore, createSuspendRegistry, InMemoryBlobStore } from "@flowlathe/runtime";
 import { describe, expect, it } from "vitest";
 import { GraphEngine } from "./run-graph.js";
 
@@ -18,6 +18,7 @@ function makeRun(): ReturnType<typeof createRun> {
       blobs: new InMemoryBlobStore(),
       emit: () => undefined,
       clock: { now: () => 0 },
+      state: createStateStore(() => undefined, { decls: [] }),
       ...createSuspendRegistry(),
     },
   });
@@ -26,6 +27,7 @@ function makeRun(): ReturnType<typeof createRun> {
 const chain: FlowGraph = {
   nodes: [node("a", "prompt", promptData("start")), node("b", "prompt", promptData("next: {{input}}"))],
   edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
+  state: [],
 };
 
 describe("GraphEngine — stepping", () => {

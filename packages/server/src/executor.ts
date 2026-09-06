@@ -21,7 +21,14 @@ export interface RunFlowHandle {
 export function runFlow(opts: RunFlowOptions): RunFlowHandle {
   const { db, hub, scheduler, flowVersionId, graph } = opts;
   const { executionId, branchId } = startExecution(db, flowVersionId, "run");
-  const { run, resolveSuspended, emit } = buildHostAndRun({ db, hub, scheduler, executionId, branchId });
+  const { run, resolveSuspended, emit } = buildHostAndRun({
+    db,
+    hub,
+    scheduler,
+    executionId,
+    branchId,
+    stateDecls: graph.state,
+  });
   hub.registerResolver(executionId, resolveSuspended);
 
   const hasOutgoing = new Set(graph.edges.map((e) => e.source));

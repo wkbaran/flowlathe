@@ -17,6 +17,7 @@ describe("runUserInput", () => {
           resolvePending = resolve;
         }),
       resolveSuspended: () => undefined,
+      state: { read: () => undefined, write: () => undefined },
     };
 
     const promise = runUserInput(ctx, { id: "u", prompt: "What's your name?" });

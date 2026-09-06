@@ -27,6 +27,17 @@ export class MockProviderAdapter implements ProviderAdapter {
   }
 
   async call(req: ProviderCallRequest): Promise<ProviderCallResult> {
+    // Deterministic tool-call simulation: a prompt can ask the mock to "decide" to call a tool
+    // by embedding a literal `CALL_TOOL: <name> <jsonArgs>` line. Only honored once per prompt —
+    // the caller's follow-up round appends a `[tool calls]` marker, which suppresses it, so the
+    // loop terminates instead of re-triggering the same call forever.
+    if (req.tools && req.tools.length > 0 && !req.prompt.includes("[tool calls]")) {
+      const match = req.prompt.match(/CALL_TOOL:\s*(\w+)\s+(\{.*\})/);
+      if (match) {
+        const [, name, argsJson] = match;
+        return { content: "", finishReason: "tool_calls", toolCalls: [{ id: "call_1", name: name!, args: JSON.parse(argsJson!) }] };
+      }
+    }
     const content = this.responses
       ? lookup(this.responses, req.nodeId, req.prompt)
       : `[mock:${req.modelId}] ${req.prompt}`;

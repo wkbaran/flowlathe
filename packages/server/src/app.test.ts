@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { type OpenedDb, ensureDefaultMockProvider, openDb, runMigrations } from "@flowlathe/persistence";
+import { type OpenedDb, ensureDefaultMockProvider, getBlob, openDb, runMigrations } from "@flowlathe/persistence";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { SchedulerRegistry } from "./scheduler-registry.js";
@@ -45,7 +45,7 @@ describe("flow API", () => {
     expect(saved.json().version).toBe(2);
 
     const fetched = await app.inject({ method: "GET", url: `/api/flows/${created.id}` });
-    expect(fetched.json().graph).toEqual(graph);
+    expect(fetched.json().graph).toEqual({ ...graph, state: [] });
   });
 
   it("404s for an unknown flow id", async () => {
@@ -109,6 +109,102 @@ describe("run + export", () => {
     const res = await app.inject({ method: "GET", url: `/api/flows/${flowId}/export` });
     expect(res.statusCode).toBe(200);
     expect(res.json().script).toContain("MockProviderAdapter");
+  });
+});
+
+async function waitForFinished(executionId: string): Promise<void> {
+  let status: string | undefined;
+  for (let i = 0; i < 50 && status !== "finished"; i++) {
+    const res = await app.inject({ method: "GET", url: `/api/executions/${executionId}` });
+    status = res.json().execution.status;
+    if (status !== "finished") await new Promise((r) => setTimeout(r, 10));
+  }
+  expect(status).toBe("finished");
+}
+
+describe("state", () => {
+  it("a prompt's write_state tool call is applied with the entry's merge rule and observable via the state endpoint", async () => {
+    const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Stateful" } })).json();
+    const graph = {
+      nodes: [
+        {
+          id: "a",
+          type: "prompt",
+          position: { x: 0, y: 0 },
+          data: {
+            template: 'CALL_TOOL: write_state {"entry":"notes","value":"hello"}',
+            providerId: "mock",
+            modelId: "m",
+            enableStateTools: true,
+          },
+        },
+      ],
+      edges: [],
+      state: [{ name: "notes", type: "string", merge: "append" }],
+    };
+    await app.inject({ method: "PUT", url: `/api/flows/${created.id}`, payload: { graph } });
+
+    const started = await app.inject({ method: "POST", url: `/api/flows/${created.id}/run` });
+    const { executionId } = started.json();
+    await waitForFinished(executionId);
+
+    const execution = (await app.inject({ method: "GET", url: `/api/executions/${executionId}` })).json().execution;
+    const state = (
+      await app.inject({ method: "GET", url: `/api/executions/${executionId}/state?branchId=${execution.rootBranchId}` })
+    ).json();
+    expect(state).toEqual({ notes: ["hello"] });
+
+    const lineage = (
+      await app.inject({
+        method: "GET",
+        url: `/api/executions/${executionId}/state-lineage?branchId=${execution.rootBranchId}`,
+      })
+    ).json();
+    expect(lineage).toEqual([]); // nothing else read "notes" in this flow
+  });
+});
+
+describe("context transforms", () => {
+  it("chains append -> filter-role, then a prompt renders the result as flat text", async () => {
+    const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Ctx" } })).json();
+    const graph = {
+      nodes: [
+        {
+          id: "seed",
+          type: "contextTransform",
+          position: { x: 0, y: 0 },
+          data: { transformKind: "append", startsNewContext: true, appendRole: "system", appendTemplate: "sys prompt" },
+        },
+        {
+          id: "addUser",
+          type: "contextTransform",
+          position: { x: 1, y: 0 },
+          data: { transformKind: "append", appendRole: "user", appendTemplate: "hi there" },
+        },
+        {
+          id: "reply",
+          type: "prompt",
+          position: { x: 2, y: 0 },
+          data: { template: "{{ctx}}", providerId: "mock", modelId: "m" },
+        },
+      ],
+      edges: [
+        { id: "e1", source: "seed", target: "addUser", sourceHandle: "context", targetHandle: "context" },
+        { id: "e2", source: "addUser", target: "reply", sourceHandle: "output", targetHandle: "ctx" },
+      ],
+      state: [],
+    };
+    await app.inject({ method: "PUT", url: `/api/flows/${created.id}`, payload: { graph } });
+
+    const started = await app.inject({ method: "POST", url: `/api/flows/${created.id}/run` });
+    const { executionId } = started.json();
+    await waitForFinished(executionId);
+
+    const log = (await app.inject({ method: "GET", url: `/api/executions/${executionId}` })).json();
+    const reply = log.responses.find((r: { nodeId: string }) => r.nodeId === "reply");
+    const content = getBlob(opened.db, reply.contentSha)!.toString("utf-8");
+    expect(content).toContain("system: sys prompt");
+    expect(content).toContain("user: hi there");
   });
 });
 

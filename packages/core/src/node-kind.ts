@@ -1,4 +1,13 @@
-export const NODE_KINDS = ["prompt", "router", "merge", "loop", "map", "pause", "userInput"] as const;
+export const NODE_KINDS = [
+  "prompt",
+  "router",
+  "merge",
+  "loop",
+  "map",
+  "pause",
+  "userInput",
+  "contextTransform",
+] as const;
 
 export type NodeKind = (typeof NODE_KINDS)[number];
 

@@ -10,6 +10,7 @@ describe("compileGraph", () => {
         { id: "b", type: "prompt", position: { x: 1, y: 0 }, data: { template: "next: {{input}}", providerId: "mock", modelId: "m" } },
       ],
       edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
+      state: [],
     };
     const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
     expect(script).toContain("MockProviderAdapter");
@@ -25,6 +26,7 @@ describe("compileGraph", () => {
         { id: "b", type: "prompt", position: { x: 0, y: 1 }, data: { template: "b", providerId: "mock", modelId: "m" } },
       ],
       edges: [],
+      state: [],
     };
     const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
     expect(script).toContain("await Promise.all([");

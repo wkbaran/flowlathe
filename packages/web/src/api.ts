@@ -44,7 +44,7 @@ export function saveFlowGraph(id: string, graph: FlowGraph): Promise<FlowWithGra
   }).then((res) => json(res));
 }
 
-export function runFlow(id: string): Promise<{ executionId: string }> {
+export function runFlow(id: string): Promise<{ executionId: string; branchId: string }> {
   return fetch(`/api/flows/${id}/run`, { method: "POST" }).then((res) => json(res));
 }
 
@@ -62,7 +62,7 @@ export interface ResponseLogEntry {
 }
 
 export interface ExecutionStatus {
-  execution: { id: string; status: string; startedAt: string; endedAt: string | null };
+  execution: { id: string; status: string; startedAt: string; endedAt: string | null; rootBranchId: string | null };
   responses: ResponseLogEntry[];
 }
 
@@ -211,4 +211,21 @@ export interface SchedulerStats {
 
 export function getSchedulerStats(): Promise<Record<string, SchedulerStats>> {
   return fetch("/api/scheduler/stats").then((res) => json(res));
+}
+
+export function getExecutionState(executionId: string, branchId: string): Promise<Record<string, unknown>> {
+  return fetch(`/api/executions/${executionId}/state?branchId=${encodeURIComponent(branchId)}`).then((res) => json(res));
+}
+
+export interface StateLineageEdge {
+  entry: string;
+  writerNodeId: string;
+  writerSeq: number;
+  readerNodeId: string;
+}
+
+export function getStateLineage(executionId: string, branchId: string): Promise<StateLineageEdge[]> {
+  return fetch(`/api/executions/${executionId}/state-lineage?branchId=${encodeURIComponent(branchId)}`).then((res) =>
+    json(res),
+  );
 }

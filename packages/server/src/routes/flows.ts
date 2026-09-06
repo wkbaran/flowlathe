@@ -1,6 +1,6 @@
 import type { ProviderConfig } from "@flowlathe/compiler";
 import { compileGraph } from "@flowlathe/compiler";
-import { parseFlowGraph, type Scheduler } from "@flowlathe/core";
+import { emptyFlowGraph, parseFlowGraph, type Scheduler } from "@flowlathe/core";
 import { createFlow, getFlow, listFlows, listProviders, saveFlowVersion } from "@flowlathe/persistence";
 import type { Db } from "@flowlathe/persistence";
 import type { FastifyInstance } from "fastify";
@@ -28,7 +28,7 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.message });
     }
-    const flow = createFlow(db, parsed.data.name, { nodes: [], edges: [] });
+    const flow = createFlow(db, parsed.data.name, emptyFlowGraph());
     return reply.code(201).send(flow);
   });
 
@@ -58,8 +58,8 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
   app.post<{ Params: { id: string } }>("/api/flows/:id/run", async (request, reply) => {
     const flow = getFlow(db, request.params.id);
     if (!flow) return reply.code(404).send({ error: "flow not found" });
-    const { executionId } = runFlow({ db, hub, scheduler, flowVersionId: flow.flowVersionId, graph: flow.graph });
-    return reply.code(202).send({ executionId });
+    const { executionId, branchId } = runFlow({ db, hub, scheduler, flowVersionId: flow.flowVersionId, graph: flow.graph });
+    return reply.code(202).send({ executionId, branchId });
   });
 
   app.post<{ Params: { id: string } }>("/api/flows/:id/step-start", async (request, reply) => {

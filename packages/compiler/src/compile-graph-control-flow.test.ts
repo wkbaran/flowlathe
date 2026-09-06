@@ -26,6 +26,7 @@ describe("compileGraph — router + merge", () => {
       { id: "e3", source: "codeAnswer", target: "merge", targetHandle: "in1" },
       { id: "e4", source: "proseAnswer", target: "merge", targetHandle: "in2" },
     ],
+    state: [],
   };
 
   it("emits an if/else chain guarding each branch, and optional chaining into merge", () => {
@@ -54,6 +55,7 @@ describe("compileGraph — map", () => {
       { id: "body", type: "prompt", position: { x: 1, y: 0 }, data: promptData("got: {{item}}"), parentId: "m" },
     ],
     edges: [],
+    state: [],
   };
 
   it("emits an inlined rt.map call referencing the body node's spec", () => {

@@ -29,6 +29,9 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-context-transform':
+        specifier: workspace:*
+        version: link:../nodes/context-transform
       '@flowlathe/node-loop':
         specifier: workspace:*
         version: link:../nodes/loop
@@ -76,6 +79,9 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-context-transform':
+        specifier: workspace:*
+        version: link:../nodes/context-transform
       '@flowlathe/node-loop':
         specifier: workspace:*
         version: link:../nodes/loop
@@ -107,6 +113,22 @@ importers:
       '@flowlathe/providers':
         specifier: workspace:*
         version: link:../providers
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/context-transform:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -275,6 +297,9 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-context-transform':
+        specifier: workspace:*
+        version: link:../nodes/context-transform
       '@flowlathe/node-loop':
         specifier: workspace:*
         version: link:../nodes/loop

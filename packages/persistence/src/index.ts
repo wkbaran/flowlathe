@@ -8,5 +8,7 @@ export * from "./snapshots.js";
 export * from "./credentials.js";
 export * from "./providers.js";
 export * from "./models.js";
+export * from "./state.js";
+export * from "./contexts.js";
 export * from "./migrate.js";
 export * as schema from "./schema.js";
