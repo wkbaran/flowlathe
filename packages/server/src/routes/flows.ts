@@ -5,9 +5,12 @@ import {
   findMissingToolsets,
   parseFlowGraph,
   requiredToolsets,
+  validateGraph,
+  type FlowNode,
   type Scheduler,
   type ToolRegistration,
 } from "@flowlathe/core";
+import { registry } from "@flowlathe/interpreter";
 import { createFlow, getFlow, listFlows, listProviders, saveFlowVersion } from "@flowlathe/persistence";
 import type { Db } from "@flowlathe/persistence";
 import type { FastifyInstance } from "fastify";
@@ -66,6 +69,10 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
   app.post<{ Params: { id: string } }>("/api/flows/:id/run", async (request, reply) => {
     const flow = getFlow(db, request.params.id);
     if (!flow) return reply.code(404).send({ error: "flow not found" });
+    const problems = validateGraph(flow.graph, { portsOf });
+    if (problems.length > 0) {
+      return reply.code(409).send({ error: `invalid flow graph: ${problems.join("; ")}`, problems });
+    }
     const missing = findMissingToolsets(pluginToolsets ?? [], requiredToolsets(flow.graph));
     if (missing.length > 0) {
       return reply.code(409).send({ error: dependencyErrorMessage(missing), missing });
@@ -84,6 +91,10 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
   app.post<{ Params: { id: string } }>("/api/flows/:id/step-start", async (request, reply) => {
     const flow = getFlow(db, request.params.id);
     if (!flow) return reply.code(404).send({ error: "flow not found" });
+    const problems = validateGraph(flow.graph, { portsOf });
+    if (problems.length > 0) {
+      return reply.code(409).send({ error: `invalid flow graph: ${problems.join("; ")}`, problems });
+    }
     const missing = findMissingToolsets(pluginToolsets ?? [], requiredToolsets(flow.graph));
     if (missing.length > 0) {
       return reply.code(409).send({ error: dependencyErrorMessage(missing), missing });
@@ -108,4 +119,13 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
 
 function dependencyErrorMessage(missing: { toolset: string; reason: string }[]): string {
   return `workflow is missing required plugin(s): ${missing.map((m) => `${m.toolset} (${m.reason})`).join("; ")}`;
+}
+
+/** Same rationale as the plugin-toolset gate above: the interpreter's own `validateGraph` call
+ *  (in `GraphEngine`'s constructor) would still create an execution row that immediately flips
+ *  to "failed" via the `run_failed` fast-fail path, rather than refusing the request outright —
+ *  so both `/run` and `/step-start` check first. Mirrors `run-graph.ts`'s own `portsOf`. */
+function portsOf(node: FlowNode): string[] {
+  const data = registry[node.type].schema.parse(node.data) as Record<string, unknown>;
+  return registry[node.type].inputPorts({ id: node.id, ...data }).map((p) => p.name);
 }

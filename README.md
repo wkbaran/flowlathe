@@ -118,16 +118,26 @@ discovered once at server startup and exposed as the toolset `mcp:<name>`; check
 `/api/plugins/status` (or the workflow-dependency banner on the canvas) if a server fails to
 connect.
 
+## Loop/Map bodies
+
+A Loop/Map body can be an arbitrary multi-node subgraph — any chain, fan-out, or nested
+Router/Loop/Map wired among nodes that share a `parentId` pointing at the Loop/Map — not just a
+single node. The interpreter and compiler both walk the graph **region by region**: the
+top-level graph is one region, and each Loop/Map's body is another, recursively (a body node can
+itself be a Loop/Map with its own body). A body's entry point(s) and its one terminal node are
+inferred from the graph shape rather than declared — see `@flowlathe/core`'s `regions.ts` and
+`validateGraph` for the exact rules. Two restrictions remain:
+
+- **The body boundary is closed.** An edge with exactly one endpoint inside a body — in either
+  direction — is a validation error. Passing a loop-invariant value into a body, or a value out
+  of one, goes through flow State (`read_state`/`write_state`) instead.
+- **Exactly one terminal per body.** A body that fans out to more than one dead-end node needs a
+  Merge to join them back into a single result.
+
 ## Known v1 limitations
 
-- Loop/Map bodies are a single node (which can itself be any node kind), not an arbitrary
-  subgraph. Both the interpreter and the compiler store the body lookup as a single-value
-  `Map<parentId, FlowNode>` and never index edges between body nodes — nothing in the graph
-  schema itself blocks multiple nodes sharing a `parentId`; this is purely a data-structure
-  choice, symmetric across both runtimes. Supporting a real subgraph body is a three-layer
-  feature (schema/canvas representation of a multi-node body, interpreter, compiler), not a
-  compiler-only fix — see `packages/interpreter/src/run-graph.ts` and
-  `packages/compiler/src/compile-graph.ts`.
+None currently tracked here — see `CLAUDE.md` for narrower, already-resolved gaps and the
+surprises encountered building each slice.
 
 ## Repository layout
 

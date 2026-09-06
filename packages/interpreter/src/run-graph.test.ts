@@ -47,6 +47,14 @@ function makeRun(): { run: ReturnType<typeof createRun>; events: RunEvent[]; hos
 
 const promptData = (template: string) => ({ template, providerId: "mock", modelId: "m" });
 
+const mapData = (itemPortName: string, overrides: Record<string, unknown> = {}) => ({
+  itemsTemplate: '["x","y"]',
+  itemPortName,
+  maxConcurrency: 2,
+  maxItems: 10,
+  ...overrides,
+});
+
 describe("runGraph — linear chains", () => {
   it("feeds node A's output into node B's template", async () => {
     const { run } = makeRun();
@@ -346,6 +354,150 @@ describe("runGraph — map", () => {
       "[mock:m] got: y",
       "[mock:m] got: z",
     ]);
+  });
+});
+
+describe("runGraph — multi-node (subgraph) bodies", () => {
+  it("map with a 2-node chain body dispatches both nodes per iteration under scoped keys", async () => {
+    const { run, events } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [
+        node("m", "map", { itemsTemplate: '["x","y"]', itemPortName: "item", maxConcurrency: 2, maxItems: 10 }),
+        node("a", "prompt", promptData("{{item}}"), "m"),
+        node("b", "prompt", promptData("next: {{input}}"), "m"),
+      ],
+      edges: [{ id: "a-b", source: "a", target: "b", targetHandle: "input" }],
+      state: [],
+    };
+    const { outputs } = await runGraph({ graph, run });
+    expect(JSON.parse(outputs["m"]!)).toEqual([
+      "[mock:m] next: [mock:m] x",
+      "[mock:m] next: [mock:m] y",
+    ]);
+    const startedIds = events
+      .flatMap((e) => (e.kind === "node_started" && e.nodeId.includes("@") ? [e.nodeId] : []))
+      .sort();
+    expect(startedIds).toEqual(["a@m:0", "a@m:1", "b@m:0", "b@m:1"]);
+  });
+
+  it("loop with a router+merge body: branch pruning works inside an iteration", async () => {
+    const { run, events } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [
+        node("l", "loop", {
+          initTemplate: "seed",
+          accPortName: "input",
+          stopValue: "[mock:m] X:seed",
+          maxIterations: 3,
+        }),
+        node("r", "router", { routes: ["x", "y"], cases: [{ value: "seed", route: "x" }], defaultRoute: "y" }, "l"),
+        node("x", "prompt", promptData("X:{{input}}"), "l"),
+        node("y", "prompt", promptData("Y:{{input}}"), "l"),
+        node("merge", "merge", {}, "l"),
+      ],
+      edges: [
+        { id: "e1", source: "r", target: "x", sourceHandle: "x", targetHandle: "input" },
+        { id: "e2", source: "r", target: "y", sourceHandle: "y", targetHandle: "input" },
+        { id: "e3", source: "x", target: "merge", targetHandle: "in1" },
+        { id: "e4", source: "y", target: "merge", targetHandle: "in2" },
+      ],
+      state: [],
+    };
+    const { outputs } = await runGraph({ graph, run });
+    expect(outputs["l"]).toBe("[mock:m] X:seed");
+    const skipped = events.filter((e) => e.kind === "node_skipped");
+    expect(skipped).toEqual([{ kind: "node_skipped", nodeId: "y@l:0", reason: "upstream_skipped" }]);
+  });
+
+  it("map-of-loop nesting produces a /-joined scoped activation key", async () => {
+    const { run, events } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [
+        node("m", "map", mapData("item", { itemsTemplate: '["a","b"]' })),
+        node("l", "loop", { initTemplate: "{{item}}", accPortName: "acc", stopValue: "unreachable", maxIterations: 1 }, "m"),
+        node("body2", "prompt", promptData("{{acc}}"), "l"),
+      ],
+      edges: [],
+      state: [],
+    };
+    await expect(runGraph({ graph, run })).rejects.toThrow(/maxIterations/);
+    const startedIds = events.flatMap((e) => (e.kind === "node_started" ? [e.nodeId] : []));
+    expect(startedIds).toContain("body2@m:0/l:0");
+    expect(startedIds).toContain("body2@m:1/l:0");
+  });
+
+  it("each of R3/R4/R5/R6/R7 is caught by validation before any node dispatches", async () => {
+    const { run: r1 } = makeRun();
+    await expect(
+      runGraph({
+        graph: { nodes: [node("m", "map", mapData("item"))], edges: [], state: [] },
+        run: r1,
+      }),
+    ).rejects.toThrow(/invalid flow graph.*no body node/);
+
+    const { run: r2, events: e2 } = makeRun();
+    await expect(
+      runGraph({
+        graph: {
+          nodes: [node("m", "map", mapData("item")), node("outer", "prompt", promptData("hi")), node("a", "prompt", promptData("{{item}}"), "m")],
+          edges: [{ id: "e1", source: "outer", target: "a", targetHandle: "item" }],
+          state: [],
+        },
+        run: r2,
+      }),
+    ).rejects.toThrow(/invalid flow graph.*crosses into a Loop\/Map body/);
+    expect(e2).toEqual([]);
+
+    const { run: r3 } = makeRun();
+    await expect(
+      runGraph({
+        graph: {
+          nodes: [node("m", "map", mapData("item")), node("a", "prompt", promptData("{{item}}"), "m"), node("b", "prompt", promptData("{{input}}"), "m")],
+          edges: [
+            { id: "e1", source: "a", target: "b", targetHandle: "input" },
+            { id: "e2", source: "b", target: "a", targetHandle: "item" },
+          ],
+          state: [],
+        },
+        run: r3,
+      }),
+    ).rejects.toThrow(/invalid flow graph.*contains a cycle/);
+
+    const { run: r4 } = makeRun();
+    await expect(
+      runGraph({
+        graph: {
+          nodes: [
+            node("m", "map", mapData("item")),
+            node("a", "prompt", promptData("{{item}}"), "m"),
+            node("b", "prompt", promptData("{{item}}"), "m"),
+          ],
+          edges: [],
+          state: [],
+        },
+        run: r4,
+      }),
+    ).rejects.toThrow(/invalid flow graph.*more than one terminal node/);
+
+    const { run: r5 } = makeRun();
+    await expect(
+      runGraph({
+        graph: { nodes: [node("m", "map", mapData("item")), node("a", "prompt", promptData("hi"), "m")], edges: [], state: [] },
+        run: r5,
+      }),
+    ).rejects.toThrow(/invalid flow graph.*no node declaring input port "item"/);
+
+    const { run: r6 } = makeRun();
+    await expect(
+      runGraph({
+        graph: {
+          nodes: [node("m", "map", mapData("item")), node("a", "prompt", promptData("{{item}} {{extra}}"), "m")],
+          edges: [],
+          state: [],
+        },
+        run: r6,
+      }),
+    ).rejects.toThrow(/invalid flow graph.*declares input port "extra" with no incoming edge/);
   });
 });
 

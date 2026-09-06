@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
+import { loopRouterBodyGraph, loopRouterBodyResponses } from "./golden/loop-router-body.js";
 import { mapFanoutGraph, mapFanoutResponses } from "./golden/map-fanout.js";
+import { mapMultinodeBodyGraph, mapMultinodeBodyResponses } from "./golden/map-multinode-body.js";
+import { nestedMapInLoopGraph, nestedMapInLoopResponses } from "./golden/nested-map-in-loop.js";
 import { routerDeepBranchGraph, routerDeepBranchResponses } from "./golden/router-deep-branch.js";
 import { routerMergeGraph, routerMergeResponses } from "./golden/router-merge.js";
 import { routerNestedGraph, routerNestedResponses } from "./golden/router-nested.js";
@@ -97,6 +100,45 @@ describe("interpreter/compiler parity", () => {
           output: "DONE",
         },
       ]);
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a Map body that's a 2-node chain, not a single node",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(mapMultinodeBodyGraph, mapMultinodeBodyResponses);
+      const viaCompiled = traceViaCompiledScript(mapMultinodeBodyGraph, mapMultinodeBodyResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      const mapEntry = viaInterpreter.find((e) => e.nodeId === "m");
+      expect(mapEntry && JSON.parse(mapEntry.output)).toEqual(["B_X", "B_Y", "B_Z"]);
+      expect(viaInterpreter.map((e) => e.nodeId).sort()).toEqual(
+        ["a@m:0", "a@m:1", "a@m:2", "b@m:0", "b@m:1", "b@m:2", "m"].sort(),
+      );
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a Loop body that's router -> {x, y} -> merge (branch pruning inside an iteration)",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(loopRouterBodyGraph, loopRouterBodyResponses);
+      const viaCompiled = traceViaCompiledScript(loopRouterBodyGraph, loopRouterBodyResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter.map((e) => e.nodeId)).not.toContain("y@l:0");
+      expect(viaInterpreter.find((e) => e.nodeId === "l")?.output).toBe("MERGED");
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a Loop whose body node is itself a Map with its own body (/-joined scoped ids)",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(nestedMapInLoopGraph, nestedMapInLoopResponses);
+      const viaCompiled = traceViaCompiledScript(nestedMapInLoopGraph, nestedMapInLoopResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter.map((e) => e.nodeId).sort()).toEqual(["l", "leaf@l:0/m:0", "leaf@l:0/m:1", "m@l:0"].sort());
+      expect(viaInterpreter.find((e) => e.nodeId === "l")?.output).toBe('["LX","LY"]');
     },
     15_000,
   );

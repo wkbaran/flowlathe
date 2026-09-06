@@ -4,12 +4,15 @@ import {
   isValue,
   neverSlot,
   requiredToolsets,
+  terminalNodeIds,
+  validateGraph,
   valueSlot,
   type FlowGraph,
   type FlowNode,
   type NeverReason,
   type NodeKind,
   type PortSlot,
+  type ScopePath,
 } from "@flowlathe/core";
 import type { LoopSpec } from "@flowlathe/node-loop";
 import type { MapSpec } from "@flowlathe/node-map";
@@ -36,33 +39,70 @@ interface EdgeRef {
   sourceHandle: string;
 }
 
+/** The value injected into every entry port (a port named `port` with no in-region edge) of a
+ *  Loop/Map body region, for one iteration. */
+interface Injection {
+  port: string;
+  value: string;
+}
+
+export interface EngineOptions {
+  /** Which region this engine walks. `undefined` = the top-level region. */
+  ownerId?: string | undefined;
+  /** Enclosing Loop/Map iterations, for activation keys and `contextNodeId` scoping. */
+  scopePath?: ScopePath;
+  /** The per-iteration value injected into this region's entry ports (see `EngineOptions.ownerId`). */
+  injected?: Injection | undefined;
+  initialOutputs?: Map<string, Record<string, PortSlot>>;
+}
+
+/** Declared input port names for a node, independent of scope — used only for the top-level
+ *  `validateGraph` call (R6/R7), which needs port names, not readiness. */
+function portsOf(node: FlowNode): string[] {
+  const data = registry[node.type].schema.parse(node.data) as Record<string, unknown>;
+  return registry[node.type].inputPorts({ id: node.id, ...data }).map((p) => p.name);
+}
+
 /**
- * A graph walker over the Activation/PortSlot readiness lattice. Reusable for both "run"
- * (dispatch every ready activation concurrently) and "step" (dispatch exactly one, in
- * deterministic order, and let the caller snapshot between steps) modes — see PLAN.md's
- * "The interpreter" section. Loop/Map bodies are a single node (via `parentId`), driven
- * atomically inside one dispatch; stepping treats a whole Loop/Map as one step (see CLAUDE.md).
+ * A graph walker over the Activation/PortSlot readiness lattice, for one **region** — either the
+ * top-level graph (`ownerId: undefined`) or one Loop/Map node's body (`ownerId: <that node's
+ * id>`). Reusable for both "run" (dispatch every ready activation concurrently) and "step"
+ * (dispatch exactly one, in deterministic order, and let the caller snapshot between steps) modes
+ * — see PLAN.md's "The interpreter" section.
+ *
+ * A Loop/Map body can be an arbitrary multi-node subgraph (see PLAN-SUBGRAPH-BODIES.md): each
+ * iteration spins up a fresh sub-`GraphEngine` scoped to that body region, with the per-iteration
+ * value injected into any entry port and the iteration's result read off the region's one
+ * terminal node (both inferred, not declared — see `@flowlathe/core`'s `regions.ts`). Nesting
+ * (a body node that's itself a Loop/Map) falls out for free: the sub-engine's own
+ * `dispatchLoopOrMap` recurses with a longer `scopePath`. Stepping still treats a whole Loop/Map
+ * as one step — a sub-engine is created and discarded entirely inside one `dispatchNode` call, so
+ * `EngineSnapshot` needs no change and body nodes aren't individually steppable (see CLAUDE.md).
  */
 export class GraphEngine {
   private readonly run: Run;
+  private readonly graph: FlowGraph;
+  private readonly ownerId: string | undefined;
+  private readonly scopePath: ScopePath;
+  private readonly injected: Injection | undefined;
   private readonly nodesById: Map<string, FlowNode>;
-  private readonly bodyByParent: Map<string, FlowNode>;
   private readonly edgesByTargetPort: Map<string, Map<string, EdgeRef[]>>;
   private readonly outputs: Map<string, Record<string, PortSlot>>;
   private readonly rank: Map<string, number>;
   private readonly running = new Map<string, Promise<void>>();
 
-  constructor(graph: FlowGraph, run: Run, initialOutputs?: Map<string, Record<string, PortSlot>>) {
+  constructor(graph: FlowGraph, run: Run, opts: EngineOptions = {}) {
     this.run = run;
-    this.nodesById = new Map(graph.nodes.filter((n) => !n.parentId).map((n) => [n.id, n]));
-    this.bodyByParent = new Map();
-    for (const n of graph.nodes) {
-      if (n.parentId) this.bodyByParent.set(n.parentId, n);
-    }
+    this.graph = graph;
+    this.ownerId = opts.ownerId;
+    this.scopePath = opts.scopePath ?? [];
+    this.injected = opts.injected;
+
+    this.nodesById = new Map(graph.nodes.filter((n) => (n.parentId ?? undefined) === opts.ownerId).map((n) => [n.id, n]));
 
     this.edgesByTargetPort = new Map();
     for (const edge of graph.edges) {
-      if (!this.nodesById.has(edge.target)) continue; // body-scoped edges: handled by loop/map dispatch
+      if (!this.nodesById.has(edge.source) || !this.nodesById.has(edge.target)) continue; // boundary-crossing or another region's edge
       let byPort = this.edgesByTargetPort.get(edge.target);
       if (!byPort) {
         byPort = new Map();
@@ -74,24 +114,33 @@ export class GraphEngine {
       byPort.set(port, list);
     }
 
-    this.outputs = initialOutputs ?? new Map();
+    this.outputs = opts.initialOutputs ?? new Map();
     this.rank = computeTopoRank(this.nodesById, this.edgesByTargetPort);
 
-    // Fails before any node dispatches — both fresh runs (`runGraph`) and every step-mode restore
-    // (`GraphEngine.restore`, called once per `stepOnce`) go through this constructor, so a
-    // workflow that needs a plugin toolset the server doesn't have configured never gets to run a
-    // single node, and a plugin disconnected mid-stepping-session is caught on the very next step.
-    const missing = run.tools.missingToolsets(requiredToolsets(graph));
-    if (missing.length > 0) {
-      throw new Error(
-        `workflow is missing required plugin(s): ${missing.map((m) => `${m.toolset} (${m.reason})`).join("; ")}`,
-      );
+    // Validation and the plugin-toolset gate only run for the top-level engine, not once per
+    // Loop/Map iteration's sub-engine — both a fresh `runGraph()` call and every step-mode
+    // `GraphEngine.restore()` go through this constructor, so an invalid graph or a workflow
+    // needing a plugin toolset the server doesn't have configured never gets to run a single
+    // node, and a plugin disconnected (or a graph edited into invalidity) mid-stepping-session is
+    // caught on the very next step.
+    if (opts.ownerId === undefined) {
+      const problems = validateGraph(graph, { portsOf });
+      if (problems.length > 0) {
+        throw new Error(`invalid flow graph: ${problems.join("; ")}`);
+      }
+
+      const missing = run.tools.missingToolsets(requiredToolsets(graph));
+      if (missing.length > 0) {
+        throw new Error(
+          `workflow is missing required plugin(s): ${missing.map((m) => `${m.toolset} (${m.reason})`).join("; ")}`,
+        );
+      }
     }
   }
 
   static restore(graph: FlowGraph, run: Run, snapshot: EngineSnapshot): GraphEngine {
     const outputs = new Map(Object.entries(snapshot.outputs));
-    return new GraphEngine(graph, run, outputs);
+    return new GraphEngine(graph, run, { initialOutputs: outputs });
   }
 
   snapshot(): EngineSnapshot {
@@ -141,6 +190,21 @@ export class GraphEngine {
     return outputs;
   }
 
+  /** This region's one terminal node's first non-`never` output value, or throws if every path
+   *  through the region left it `never` (e.g. it sat on an untaken router branch). Only valid to
+   *  call once `runToCompletion` has settled every node in this region. */
+  private regionResult(kind: NodeKind): string {
+    const terminalId = terminalNodeIds(this.graph, this.ownerId!)[0]!;
+    const slots = this.outputs.get(terminalId);
+    const value = slots && Object.values(slots).find(isValue);
+    if (!value) {
+      throw new Error(
+        `${kind} body's terminal node "${terminalId}" was skipped — every path through the body must reach it`,
+      );
+    }
+    return value.value;
+  }
+
   /** Nodes neither settled nor currently in flight — excluding `running` matters once a node's
    *  dispatch spans more than one microtask (e.g. any `await`), or `runToCompletion`'s loop can
    *  re-admit the same node a second time before its first dispatch finishes. */
@@ -163,7 +227,10 @@ export class GraphEngine {
 
   private portSlot(nodeId: string, port: string): PortSlot {
     const edges = this.edgesByTargetPort.get(nodeId)?.get(port) ?? [];
-    if (edges.length === 0) return { kind: "empty" };
+    if (edges.length === 0) {
+      if (this.injected && this.injected.port === port) return valueSlot(this.injected.value);
+      return { kind: "empty" };
+    }
 
     let sawValue: PortSlot | undefined;
     let allNever = true;
@@ -184,9 +251,16 @@ export class GraphEngine {
     return { kind: "empty" };
   }
 
+  /** `id` is the node's scoped activation key (`activationKey(node.id, this.scopePath)`) — plain
+   *  `node.id` at the top level, or e.g. `node-2@node-1:0` inside a loop/map iteration, arbitrarily
+   *  nested. `contextNodeId` is set whenever this region is scoped (i.e. this is a body node) so a
+   *  Prompt body's conversation memory accumulates by the *static* node id across iterations
+   *  rather than resetting each time — see CLAUDE.md. Harmless as an extra property on any other
+   *  node kind's spec, since specs are built after `schema.parse`. */
   private parseSpec(node: FlowNode): unknown {
     const data = registry[node.type].schema.parse(node.data) as Record<string, unknown>;
-    return { id: node.id, ...data };
+    const id = activationKey(node.id, this.scopePath);
+    return this.scopePath.length === 0 ? { id, ...data } : { id, contextNodeId: node.id, ...data };
   }
 
   private async dispatchNode(node: FlowNode): Promise<void> {
@@ -229,16 +303,10 @@ export class GraphEngine {
     const outSlots: Record<string, PortSlot> = {};
     for (const port of outPorts) outSlots[port] = neverSlot("upstream_skipped");
     this.outputs.set(node.id, outSlots);
-    this.run.emit({ kind: "node_skipped", nodeId: node.id, reason });
+    this.run.emit({ kind: "node_skipped", nodeId: (spec as { id: string }).id, reason });
   }
 
   private async dispatchLoopOrMap(node: FlowNode): Promise<void> {
-    const bodyNode = this.bodyByParent.get(node.id);
-    if (!bodyNode) {
-      throw new Error(`"${node.type}" node "${node.id}" has no body node (expected a child with parentId set to it)`);
-    }
-    const bodyDescriptor = registry[bodyNode.type];
-
     const spec = this.parseSpec(node);
     const ports = registry[node.type].inputPorts(spec);
     const inputs = Object.fromEntries(
@@ -248,34 +316,26 @@ export class GraphEngine {
       }),
     );
 
-    const runBody = async (injected: Record<string, string>, index: number): Promise<string> => {
-      const key = activationKey(bodyNode.id, [{ loop: node.id, index }]);
-      const bodyData = bodyDescriptor.schema.parse(bodyNode.data) as Record<string, unknown>;
-      // contextNodeId keeps a prompt body's conversation memory keyed by the static node, not
-      // this iteration's scoped activation key — see CLAUDE.md.
-      const bodySpec = { id: key, contextNodeId: bodyNode.id, ...bodyData };
-      const result = await bodyDescriptor.dispatch!(this.run, bodySpec, injected);
-      return firstOutputValue(bodyNode.type, bodySpec, result);
+    const runBody = async (port: string, value: string, index: number): Promise<string> => {
+      const sub = new GraphEngine(this.graph, this.run, {
+        ownerId: node.id,
+        scopePath: [...this.scopePath, { loop: node.id, index }],
+        injected: { port, value },
+      });
+      await sub.runToCompletion();
+      return sub.regionResult(node.type);
     };
 
     if (node.type === "loop") {
       const loopSpec = spec as LoopSpec;
-      const result = await this.run.loop(loopSpec, inputs, (acc, i) => runBody({ [loopSpec.accPortName]: acc }, i));
+      const result = await this.run.loop(loopSpec, inputs, (acc, i) => runBody(loopSpec.accPortName, acc, i));
       this.outputs.set(node.id, { result: valueSlot(result) });
     } else {
       const mapSpec = spec as MapSpec;
-      const results = await this.run.map(mapSpec, inputs, (item, i) => runBody({ [mapSpec.itemPortName]: item }, i));
+      const results = await this.run.map(mapSpec, inputs, (item, i) => runBody(mapSpec.itemPortName, item, i));
       this.outputs.set(node.id, { results: valueSlot(JSON.stringify(results)) });
     }
   }
-}
-
-function firstOutputValue(kind: NodeKind, spec: unknown, result: Record<string, string>): string {
-  const ports = registry[kind].outputPorts(spec);
-  for (const port of ports) {
-    if (port in result) return result[port]!;
-  }
-  throw new Error(`node produced no value on any declared output port`);
 }
 
 /** Topological rank via Kahn's algorithm levels — used only to make step order deterministic. */

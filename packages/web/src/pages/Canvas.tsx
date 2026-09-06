@@ -1,4 +1,5 @@
 import type { FlowEdge, FlowNode, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
+import { validateGraph } from "@flowlathe/core";
 import {
   Alert,
   AppBar,
@@ -111,6 +112,20 @@ function requiredToolsetsFrom(ns: Node[]): string[] {
   return [...set].sort();
 }
 
+/** A Loop/Map body activation emits a scoped id like `node-2@node-1:0` (see CLAUDE.md) —
+ *  status lighting keys on the underlying node id so a body node's box lights up at all. The
+ *  raw scoped id is kept in the log text (`describeEvent`), which existing e2e specs assert on. */
+function baseNodeId(id: string): string {
+  return id.split("@")[0]!;
+}
+
+// Simple stacked layout for a Loop/Map body's children, used only when a node is newly assigned
+// a parent — existing relative positions are left alone otherwise.
+const CHILD_INDENT_X = 40;
+const CHILD_TOP_Y = 56;
+const CHILD_ROW_HEIGHT = 90;
+const CONTAINER_WIDTH = 320;
+
 function displayName(toolset: string): string {
   if (toolset.startsWith("mcp:")) return `${toolset.slice("mcp:".length)} (MCP)`;
   return toolset.charAt(0).toUpperCase() + toolset.slice(1);
@@ -216,9 +231,25 @@ export function Canvas() {
 
   function updateSelectedNodeParent(parentId: string) {
     if (!selectedNodeId) return;
-    setNodes((ns) =>
-      ns.map((n) => (n.id === selectedNodeId ? { ...n, parentId: parentId || undefined } : n)) as Node[],
-    );
+    setNodes((ns) => {
+      const siblingCount = parentId
+        ? ns.filter((n) => n.id !== selectedNodeId && n.parentId === parentId).length
+        : 0;
+      return ns.map((n) =>
+        n.id === selectedNodeId
+          ? {
+              ...n,
+              parentId: parentId || undefined,
+              extent: parentId ? ("parent" as const) : undefined,
+              // Only a freshly-assigned parent gets an auto-placed position — xyflow treats a
+              // child's position as parent-relative, so this stacks new body members instead of
+              // leaving them at their old (now nonsensical, since the coordinate space changed)
+              // canvas-absolute spot.
+              position: parentId ? { x: CHILD_INDENT_X, y: CHILD_TOP_Y + siblingCount * CHILD_ROW_HEIGHT } : n.position,
+            }
+          : n,
+      ) as Node[];
+    });
   }
 
   function addStateDecl() {
@@ -263,17 +294,17 @@ export function Canvas() {
       const event = JSON.parse(raw.data) as RunEvent;
       setLog((prev) => [...prev, { seq, text: describeEvent(event) }]);
       if (kind === "node_started") {
-        setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "running" }));
+        setNodeStatus((prev) => ({ ...prev, [baseNodeId((event as { nodeId: string }).nodeId)]: "running" }));
       } else if (kind === "node_finished") {
-        setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "done" }));
+        setNodeStatus((prev) => ({ ...prev, [baseNodeId((event as { nodeId: string }).nodeId)]: "done" }));
         setSuspended((prev) => prev.filter((s) => s.nodeId !== (event as { nodeId: string }).nodeId));
       } else if (kind === "node_failed") {
-        setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "failed" }));
+        setNodeStatus((prev) => ({ ...prev, [baseNodeId((event as { nodeId: string }).nodeId)]: "failed" }));
       } else if (kind === "node_skipped") {
-        setNodeStatus((prev) => ({ ...prev, [(event as { nodeId: string }).nodeId]: "skipped" }));
+        setNodeStatus((prev) => ({ ...prev, [baseNodeId((event as { nodeId: string }).nodeId)]: "skipped" }));
       } else if (kind === "node_suspended") {
         const e = event as Extract<RunEvent, { kind: "node_suspended" }>;
-        setNodeStatus((prev) => ({ ...prev, [e.nodeId]: "suspended" }));
+        setNodeStatus((prev) => ({ ...prev, [baseNodeId(e.nodeId)]: "suspended" }));
         setSuspended((prev) => [
           ...prev,
           {
@@ -390,7 +421,21 @@ export function Canvas() {
     setExportedScript(script);
   }
 
-  const decoratedNodes = nodes.map((n) => ({ ...n, data: { ...n.data, status: nodeStatus[n.id] ?? "idle" } }));
+  const childCounts = new Map<string, number>();
+  for (const n of nodes) {
+    if (n.parentId) childCounts.set(n.parentId, (childCounts.get(n.parentId) ?? 0) + 1);
+  }
+  const decoratedNodes = nodes.map((n) => {
+    const childCount = childCounts.get(n.id) ?? 0;
+    // xyflow renders a parentId-bearing node as a real subflow container, sized by its own
+    // `style` — not auto-fit to children — so a Loop/Map with a multi-node body needs an
+    // explicit box big enough to hold them, stacked by updateSelectedNodeParent above.
+    const containerStyle =
+      (n.type === "loop" || n.type === "map") && childCount > 0
+        ? { style: { width: CONTAINER_WIDTH, height: CHILD_TOP_Y + childCount * CHILD_ROW_HEIGHT + 16 } }
+        : {};
+    return { ...n, data: { ...n.data, status: nodeStatus[n.id] ?? "idle" }, ...containerStyle };
+  });
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
 
   // State reads/writes have no graph edge between the writer and reader node — render the
@@ -418,6 +463,15 @@ export function Canvas() {
     return [];
   });
 
+  // Live (pre-Save) structural validation — the same checks the server/interpreter run at
+  // execution time (@flowlathe/core's validateGraph), minus the port-level R6/R7 rules (which
+  // need each node kind's port declarations, only known server-side): exactly the mistakes a
+  // user can make by *drawing* a graph. Safe to check against live rather than saved state
+  // because handleRun/handleStep both call handleSave() first, so live and saved state agree by
+  // the time either fires.
+  const graphProblems = validateGraph({ nodes: nodes as FlowNode[], edges: edges as FlowEdge[], state: stateDecls });
+  const canRun = missingDeps.length === 0 && graphProblems.length === 0;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <AppBar position="static">
@@ -444,14 +498,14 @@ export function Canvas() {
           <Button variant="contained" color="secondary" onClick={handleSave} disabled={saving}>
             Save
           </Button>
-          <Button variant="contained" onClick={handleRun} disabled={missingDeps.length > 0}>
+          <Button variant="contained" onClick={handleRun} disabled={!canRun}>
             Run
           </Button>
           <Button
             variant="contained"
             color="warning"
             onClick={() => void handleStep()}
-            disabled={!stepSession && missingDeps.length > 0}
+            disabled={!stepSession && !canRun}
           >
             {stepSession ? "Step" : "Start Stepping"}
           </Button>
@@ -460,6 +514,11 @@ export function Canvas() {
           </Button>
         </Toolbar>
       </AppBar>
+      {graphProblems.length > 0 && (
+        <Alert severity="error" data-testid="workflow-validation-alert">
+          Workflow is invalid: {graphProblems.join("; ")}.
+        </Alert>
+      )}
       {missingDeps.length > 0 && (
         <Alert severity="warning" data-testid="workflow-dependency-alert">
           Workflow missing dependency: {missingDeps.join("; ")}. Fix this from{" "}

@@ -430,3 +430,61 @@ rediscover them the hard way.
   not the raw `RuntimeHost`, and every other node kind's `ctx.emit(...)` calls happen inside
   per-node `run.ts` files that *do* receive the raw host. Any code that hand-builds a `Run` object
   (rather than going through `createRun`) now needs an `emit` method too.
+- **Loop/Map bodies became an arbitrary multi-node subgraph (resolved; was a known v1 gap — see
+  git history / README, per PLAN-SUBGRAPH-BODIES.md), by making both engines "region-recursive"
+  instead of special-casing "the body node."** A region is the top-level graph (`ownerId:
+  undefined`) or one Loop/Map node's body (`ownerId`: that node's id); `@flowlathe/core`'s
+  `regions.ts` (`regions()`, `terminalNodeIds()`, `validateGraph()`) is the shared primitive,
+  following the `plugin-deps.ts` precedent ("one primitive, consumed by UI + interpreter +
+  compiler + server routes"). Scope decisions worth knowing before touching this again:
+  - **A body's entry port(s) and its one terminal node are inferred from graph shape, never
+    declared fields.** Entry: any body node declaring an input port named exactly
+    `accPortName`/`itemPortName` with no in-region incoming edge on that port receives the
+    injected per-iteration value there (zero or more such nodes is fine — a fan-out body is
+    legal). Terminal: the region's one node with no outgoing in-region edge (`validateGraph`'s R5
+    requires exactly one, erroring "join them with a Merge node" otherwise). This makes a
+    single-node body a degenerate case that falls out for free, needs no schema migration, and
+    avoids two node-id fields the canvas would have to keep referentially correct across
+    deletion.
+  - **The body boundary is closed, deliberately, both directions** (`validateGraph`'s R4): an
+    edge with exactly one endpoint inside a body is a hard error, in either direction. An
+    outer→body edge ("loop-invariant input") is real, useful, and cut from this slice on purpose
+    — flow State (`read_state`/`write_state`) is the documented workaround, named directly in the
+    error message.
+  - **A Loop/Map body's `let`-hoisted variables must be declared *inside* the arrow function**
+    (`compile-graph.ts`'s `emitRegion`/`emitLoopOrMap`), not in `main()`'s top-level preamble like
+    the top-level region's own hoists. Getting this wrong means a router branch not taken on
+    iteration 2 silently reads iteration 1's value — the single most likely correctness bug in
+    this kind of change, per the plan; pinned by `loop-router-body`'s golden fixture and a direct
+    string-position compiler test.
+  - **The scoped activation-key format is now `/`-joined for arbitrary nesting depth**
+    (`nodeId@outer:0/inner:2`, matching `activationKey`'s own format in
+    `packages/core/src/activation.ts`), and **`compile-graph.ts` still mirrors it by hand**
+    (`scopedIdExpr`, building the template literal from generated index-variable names like `i`,
+    `i1`, `i2` rather than importing `activationKey`) — this is the same manual-parity risk
+    CLAUDE.md already flagged once for the single-level case; both sides must move together if
+    the format ever changes again. A **new** wrinkle this slice added: a Loop/Map node's own spec
+    (not just its body's nodes) now needs the same scoped-`id`/`contextNodeId` treatment whenever
+    the Loop/Map node is itself nested inside another body — easy to miss since the top-level
+    case never needed it.
+  - **A region's terminal node compiles to the fixed local name `bodyResult`, regardless of node
+    count** (`compile-graph.ts`'s `emitName`) — every other body node uses the ordinary `n_<id>`
+    convention. This was necessary (not just cosmetic) to keep the pre-existing single-node-body
+    compiled output byte-identical (a real regression test asserts this), while still
+    generalizing correctly to a multi-node body's terminal, which can be any node kind — the old
+    code's hardcoded `bodyResult.output` assumed a Prompt-shaped result, which happened to be
+    right by coincidence, not by design.
+  - **xyflow (`@xyflow/react` 12.x) treats `Node.parentId` as real subflow containment** — a
+    child's `position` is parent-relative, and the parent's own rendered box is sized by its
+    `style`, never auto-fit to children. This was already true before this slice (Canvas.tsx's
+    "Parent (Loop/Map body of)" selector already set `parentId`), just never mattered visually
+    with only one child. `Canvas.tsx` now computes an explicit `style: {width, height}` for a
+    Loop/Map with children (sized to fit them, stacked by `updateSelectedNodeParent`) and gives
+    every body node `extent: "parent"` so a drag can't escape the box; `ContainerNodeView`
+    (`ControlFlowNodeViews.tsx`) renders Loop/Map as a labeled, dashed group box instead of a
+    small idle-looking rectangle once it actually has children.
+  - **`nodeStatus` (Canvas.tsx) is keyed by the *base* node id, stripped of any `@scope` suffix,
+    on the write side** (`nodeId.split("@")[0]`, applied in `subscribeToExecution`'s event
+    handlers) — a body activation's events carry a scoped id like `node-2@node-1:0`, and without
+    stripping it a body node's box would never light up during a run. The raw scoped id is kept
+    in the log text (`describeEvent`), which `slice3-map-fanout.spec.ts` already asserts on.

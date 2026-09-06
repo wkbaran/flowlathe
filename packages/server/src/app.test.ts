@@ -171,6 +171,39 @@ describe("workflow dependency gate", () => {
   });
 });
 
+async function createFlowWithBodylessMap(): Promise<string> {
+  const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Bodyless map" } })).json();
+  const graph = {
+    nodes: [
+      {
+        id: "m",
+        type: "map",
+        position: { x: 0, y: 0 },
+        data: { itemsTemplate: '["x"]', itemPortName: "item", maxConcurrency: 1, maxItems: 10 },
+      },
+    ],
+    edges: [],
+  };
+  await app.inject({ method: "PUT", url: `/api/flows/${created.id}`, payload: { graph } });
+  return created.id;
+}
+
+describe("graph validation gate", () => {
+  it("refuses to run a flow whose Loop/Map node has no body node", async () => {
+    const flowId = await createFlowWithBodylessMap();
+    const res = await app.inject({ method: "POST", url: `/api/flows/${flowId}/run` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().problems).toEqual([expect.stringContaining("has no body node")]);
+  });
+
+  it("refuses to start a step session for the same reason", async () => {
+    const flowId = await createFlowWithBodylessMap();
+    const res = await app.inject({ method: "POST", url: `/api/flows/${flowId}/step-start` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().problems).toEqual([expect.stringContaining("has no body node")]);
+  });
+});
+
 async function waitForFinished(executionId: string): Promise<void> {
   let status: string | undefined;
   for (let i = 0; i < 50 && status !== "finished"; i++) {
