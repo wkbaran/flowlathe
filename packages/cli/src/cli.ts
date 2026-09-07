@@ -2,6 +2,7 @@ import { cmdCheck } from "./commands/check.js";
 import { cmdExport } from "./commands/export.js";
 import { cmdFlows } from "./commands/flows.js";
 import { cmdFmt } from "./commands/fmt.js";
+import { cmdGc } from "./commands/gc.js";
 import { cmdRun } from "./commands/run.js";
 
 const USAGE = `usage: flowlathe <command> [args]
@@ -13,6 +14,9 @@ commands:
   run <file>                        headless interpreter run, streaming RunEvent JSON
   flows export [--dir <dir>]        every flow_versions row -> flows/<slug>.flow
   flows import <file> [--db <path>] a .flow file -> a new flow_versions row
+  gc [--db <path>] [--flow <id>] [--dry-run] [--older-than-days D]
+     [--abandoned-after-days D] [--vacuum]
+                                     collect old executions, blobs, and flow versions
 
 files default to every *.flow file in FLOWLATHE_FLOWS_DIR (default ./flows) when omitted.`;
 
@@ -29,6 +33,8 @@ async function main(): Promise<number> {
       return cmdRun(rest);
     case "flows":
       return cmdFlows(rest);
+    case "gc":
+      return cmdGc(rest);
     case undefined:
     case "help":
     case "--help":
