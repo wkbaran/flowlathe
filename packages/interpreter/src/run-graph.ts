@@ -292,11 +292,6 @@ export class GraphEngine {
   }
 
   private async dispatchNode(node: FlowNode): Promise<void> {
-    if (node.type === "loop" || node.type === "map") {
-      await this.dispatchLoopOrMap(node);
-      return;
-    }
-
     const descriptor = registry[node.type];
     const spec = this.parseSpec(node);
     const ports = descriptor.inputPorts(spec);
@@ -317,6 +312,12 @@ export class GraphEngine {
         .filter((entry): entry is [string, Extract<PortSlot, { kind: "value" }>] => isValue(entry[1]))
         .map(([name, slot]) => [name, slot.value]),
     );
+
+    if (node.type === "loop" || node.type === "map") {
+      await this.dispatchLoopOrMap(node, spec, inputs);
+      return;
+    }
+
     const result = await descriptor.dispatch!(this.run, spec, inputs);
     const outPorts = descriptor.outputPorts(spec);
     const outSlots: Record<string, PortSlot> = {};
@@ -334,16 +335,14 @@ export class GraphEngine {
     this.run.emit({ kind: "node_skipped", nodeId: (spec as { id: string }).id, reason });
   }
 
-  private async dispatchLoopOrMap(node: FlowNode): Promise<void> {
-    const spec = this.parseSpec(node);
-    const ports = registry[node.type].inputPorts(spec);
-    const inputs = Object.fromEntries(
-      ports.map((p) => {
-        const slot = this.portSlot(node.id, p.name);
-        return [p.name, isValue(slot) ? slot.value : ""];
-      }),
-    );
-
+  /** `spec`/`inputs` are already computed by `dispatchNode` — every port reaching here is a
+   *  value: Loop/Map input ports are all `required: true` (registry.ts), so the `requiredNever`
+   *  check above already skips (rather than dispatches) any node with a never-slotted port. */
+  private async dispatchLoopOrMap(
+    node: FlowNode,
+    spec: unknown,
+    inputs: Record<string, string>,
+  ): Promise<void> {
     const runBody = async (port: string, value: string, index: number): Promise<string> => {
       const sub = new GraphEngine(this.graph, this.run, {
         ownerId: node.id,

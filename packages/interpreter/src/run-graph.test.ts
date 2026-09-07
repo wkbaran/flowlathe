@@ -458,6 +458,86 @@ describe("runGraph — map", () => {
   });
 });
 
+// PLAN-LOOPMAP-BRANCH-SKIP.md: a Loop/Map fed only from an untaken router branch must be
+// skipped like any other node, not dispatched with "" substituted for its missing input.
+describe("runGraph — Loop/Map on an untaken router branch (PLAN-LOOPMAP-BRANCH-SKIP.md)", () => {
+  function untakenBranchGraph(bodyKind: "map" | "loop"): FlowGraph {
+    const branchNode =
+      bodyKind === "map"
+        ? node("m", "map", { itemsTemplate: "{{input}}", itemPortName: "item", maxConcurrency: 2, maxItems: 10 })
+        : node("l", "loop", { initTemplate: "{{input}}", accPortName: "acc", stopValue: "3", maxIterations: 10 });
+    return {
+      nodes: [
+        node("seed", "prompt", promptData("neither")),
+        node("router", "router", { routes: ["a", "b"], cases: [{ value: "a", route: "a" }], defaultRoute: "b" }),
+        branchNode,
+        node("body", "prompt", promptData(bodyKind === "map" ? "got: {{item}}" : "{{acc}}"), branchNode.id),
+      ],
+      edges: [
+        { id: "e0", source: "seed", target: "router", targetHandle: "input" },
+        { id: "e1", source: "router", target: branchNode.id, sourceHandle: "a", targetHandle: "input" },
+      ],
+      state: [],
+    };
+  }
+
+  it("skips a Map fed only from an untaken router branch", async () => {
+    const events: RunEvent[] = [];
+    const { outputs } = await runGraph({ graph: untakenBranchGraph("map"), run: identityRun(events) });
+    // "neither" doesn't match case "a" -> defaultRoute "b" taken -> m's "input" port stays never
+    expect(outputs["m"]).toBeUndefined();
+    expect(events).toContainEqual({ kind: "node_skipped", nodeId: "m", reason: "upstream_skipped" });
+    expect(events.some((e) => "nodeId" in e && e.nodeId === "body@m:0")).toBe(false);
+  });
+
+  it("skips a Loop fed only from an untaken router branch", async () => {
+    const events: RunEvent[] = [];
+    const { outputs } = await runGraph({ graph: untakenBranchGraph("loop"), run: identityRun(events) });
+    expect(outputs["l"]).toBeUndefined();
+    expect(events).toContainEqual({ kind: "node_skipped", nodeId: "l", reason: "upstream_skipped" });
+    expect(events.some((e) => "nodeId" in e && e.nodeId === "body@l:0")).toBe(false);
+  });
+
+  it("still runs a Loop/Map with no input ports at all, even off any branch", async () => {
+    const { run } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [
+        node("m", "map", { itemsTemplate: '["x","y","z"]', itemPortName: "item", maxConcurrency: 3, maxItems: 10 }),
+        node("body", "prompt", promptData("got: {{item}}"), "m"),
+      ],
+      edges: [],
+      state: [],
+    };
+    const { outputs } = await runGraph({ graph, run });
+    expect(JSON.parse(outputs["m"]!)).toEqual(["[mock:m] got: x", "[mock:m] got: y", "[mock:m] got: z"]);
+  });
+
+  it("skips only via the requiredNever branch when one port is never and a sibling port has a value", async () => {
+    // Regression guard for CLAUDE.md's warning: the `ports.every(isNever)` fallback alone does
+    // NOT catch this shape (b is a value), so deleting the `requiredNever` check specifically
+    // must make this test fail (it would dispatch with only "b" bound and throw on the missing
+    // template variable "a" instead of resolving with a skip).
+    const graph: FlowGraph = {
+      nodes: [
+        node("seed", "prompt", promptData("neither")),
+        node("router", "router", { routes: ["a", "b"], cases: [{ value: "a", route: "a" }], defaultRoute: "b" }),
+        node("always", "prompt", promptData("val")),
+        node("mixed", "prompt", promptData("{{a}}|{{b}}")),
+      ],
+      edges: [
+        { id: "e0", source: "seed", target: "router", targetHandle: "input" },
+        { id: "e1", source: "router", target: "mixed", sourceHandle: "a", targetHandle: "a" },
+        { id: "e2", source: "always", target: "mixed", targetHandle: "b" },
+      ],
+      state: [],
+    };
+    const events: RunEvent[] = [];
+    const { outputs } = await runGraph({ graph, run: identityRun(events) });
+    expect(outputs["mixed"]).toBeUndefined();
+    expect(events).toContainEqual({ kind: "node_skipped", nodeId: "mixed", reason: "upstream_skipped" });
+  });
+});
+
 describe("runGraph — multi-node (subgraph) bodies", () => {
   it("map with a 2-node chain body dispatches both nodes per iteration under scoped keys", async () => {
     const { run, events } = makeRun();

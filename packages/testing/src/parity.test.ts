@@ -8,6 +8,8 @@ import { nestedMapInLoopGraph, nestedMapInLoopResponses } from "./golden/nested-
 import { routerDeepBranchGraph, routerDeepBranchResponses } from "./golden/router-deep-branch.js";
 import { routerMergeGraph, routerMergeResponses } from "./golden/router-merge.js";
 import { routerNestedGraph, routerNestedResponses } from "./golden/router-nested.js";
+import { routerUntakenLoopGraph, routerUntakenLoopResponses } from "./golden/router-untaken-loop.js";
+import { routerUntakenMapGraph, routerUntakenMapResponses } from "./golden/router-untaken-map.js";
 import { searchNodeEnv, searchNodeGraph, searchNodeNetTable, searchNodeResponses } from "./golden/search-node.js";
 import { stateToolsGraph, stateToolsResponses } from "./golden/state-tools.js";
 import { twoNodeChainGraph, twoNodeChainResponses } from "./golden/two-node-chain.js";
@@ -104,6 +106,37 @@ describe("interpreter/compiler parity", () => {
       expect(viaCompiled).toEqual(viaInterpreter);
       const mapEntry = viaInterpreter.find((e) => e.nodeId === "m");
       expect(mapEntry && JSON.parse(mapEntry.output)).toEqual(["X_RESULT", "Y_RESULT", "Z_RESULT"]);
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a Map fed only from an untaken router branch (PLAN-LOOPMAP-BRANCH-SKIP.md)",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(routerUntakenMapGraph, routerUntakenMapResponses);
+      const viaCompiled = traceViaCompiledScript(routerUntakenMapGraph, routerUntakenMapResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      const nodeIds = viaInterpreter.map((e) => e.nodeId);
+      // The second assertion is what stops this from passing vacuously if both engines ever
+      // regress together (§5.2's explicit instruction) — equal-but-both-wrong wouldn't be caught
+      // by the toEqual check above alone.
+      expect(nodeIds).not.toContain("m");
+      expect(nodeIds).not.toContain("body@m:0");
+      expect(viaInterpreter.find((e) => e.nodeId === "takenAnswer")?.output).toBe("TAKEN_RESULT");
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a Loop fed only from an untaken router branch (PLAN-LOOPMAP-BRANCH-SKIP.md)",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(routerUntakenLoopGraph, routerUntakenLoopResponses);
+      const viaCompiled = traceViaCompiledScript(routerUntakenLoopGraph, routerUntakenLoopResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      const nodeIds = viaInterpreter.map((e) => e.nodeId);
+      expect(nodeIds).not.toContain("l");
+      expect(nodeIds).not.toContain("body@l:0");
+      expect(viaInterpreter.find((e) => e.nodeId === "takenAnswer")?.output).toBe("TAKEN_RESULT");
     },
     15_000,
   );

@@ -12,6 +12,8 @@ import { nestedMapInLoopGraph } from "./golden/nested-map-in-loop.js";
 import { routerDeepBranchGraph } from "./golden/router-deep-branch.js";
 import { routerMergeGraph } from "./golden/router-merge.js";
 import { routerNestedGraph } from "./golden/router-nested.js";
+import { routerUntakenLoopGraph } from "./golden/router-untaken-loop.js";
+import { routerUntakenMapGraph } from "./golden/router-untaken-map.js";
 import { searchNodeGraph } from "./golden/search-node.js";
 import { stateToolsGraph } from "./golden/state-tools.js";
 import { twoNodeChainGraph } from "./golden/two-node-chain.js";
@@ -30,6 +32,8 @@ const GOLDEN: { slug: string; graph: FlowGraph }[] = [
   { slug: "router-deep-branch", graph: routerDeepBranchGraph },
   { slug: "router-merge", graph: routerMergeGraph },
   { slug: "router-nested", graph: routerNestedGraph },
+  { slug: "router-untaken-loop", graph: routerUntakenLoopGraph },
+  { slug: "router-untaken-map", graph: routerUntakenMapGraph },
   { slug: "search-node", graph: searchNodeGraph },
   { slug: "state-tools", graph: stateToolsGraph },
   { slug: "two-node-chain", graph: twoNodeChainGraph },

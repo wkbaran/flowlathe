@@ -1071,3 +1071,24 @@ rediscover them the hard way.
     `BuiltHost.cancellation` and the `node_cancelled` event/`steps.status = "cancelled"` plumbing
     are what a future cancel route or timeout policy would hang off of, with no further plumbing
     needed in the interpreter, compiler, or node packages.
+- **PLAN-LOOPMAP-BRANCH-SKIP.md: `dispatchNode`'s never-detection must stay ABOVE the Loop/Map
+  short-circuit.** `GraphEngine.dispatchNode` (`packages/interpreter/src/run-graph.ts`) used to
+  branch into `dispatchLoopOrMap` before the `requiredNever`/`ports.every(isNever)` skip checks,
+  so a Loop/Map fed only from an untaken router branch ran anyway — `dispatchLoopOrMap` coerced
+  the missing (`never`) port to `""` rather than skipping. Map crashed outright (`itemsTemplate`
+  rendered `""`, `JSON.parse` threw); Loop was worse — it just ran with an empty accumulator and
+  could complete normally, with the untaken branch's body having really executed. Fixed by
+  reordering: `dispatchNode` now computes `spec`/`ports`/`slots` once, runs both never-checks, and
+  only then branches to `dispatchLoopOrMap` (now passed the already-filtered `spec`/`inputs`
+  rather than recomputing them, since every port reaching it is guaranteed a value post-reorder).
+  **The compiler already got this right** — `emitLoopOrMap` is called from inside `emitScope`
+  (`packages/compiler/src/compile-graph.ts`), so a Loop/Map gets a `Scope` like any other node and
+  is emitted inside the matching `if`/`else if` block; confirmed by reading the actual emitted
+  source for a router-guarded Map, not just by inspecting the code. No compiler change was needed.
+  **Loop/Map input ports are all `required: true`** (derived from `extractTemplateVars` over
+  `initTemplate`/`itemsTemplate`, `packages/interpreter/src/registry.ts`), which is why the
+  `requiredNever` branch — not the `ports.every(isNever)` fallback — is the one that actually
+  catches this shape; a node with one never port and one value-carrying sibling port only trips
+  `requiredNever`. Golden fixtures `router-untaken-map`/`router-untaken-loop`
+  (`packages/testing/src/golden/`) pin this, each verified to actually fail pre-fix (a JSON-parse
+  crash and a `LoopLimitExceeded`, respectively) before the fix made them pass.

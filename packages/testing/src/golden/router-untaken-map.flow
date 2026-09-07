@@ -1,0 +1,37 @@
+flow "router-untaken-map" {
+  node seed: prompt @(0, 0) {
+    template = "a"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node router: router @(1, 0) {
+    routes = ["a", "b"]
+    cases = [{value: "a", route: "a"}]
+    defaultRoute = "b"
+  }
+
+  node takenAnswer: prompt @(2, 0) {
+    template = "TAKEN: {{q}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node m: map @(2, 1) {
+    itemsTemplate = "[\"{{input}}\"]"
+    itemPortName = "item"
+    maxConcurrency = 2
+    maxItems = 10
+    body {
+      node body: prompt @(3, 1) {
+        template = "got: {{item}}"
+        providerId = "mock"
+        modelId = "m"
+      }
+    }
+  }
+
+  seed.output -> router.input
+  router.a -> takenAnswer.q
+  router.b -> m.input
+}
