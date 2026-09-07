@@ -2,11 +2,14 @@ import type { FlowGraph } from "@flowlathe/core";
 import {
   createFlow,
   createTrigger,
+  getBlob,
   getExecution,
   listExecutionTriggers,
+  listResponses,
   openDb,
   runMigrations,
   setTriggerCursor,
+  sha256Of,
   type OpenedDb,
 } from "@flowlathe/persistence";
 import { DiscordClient } from "@flowlathe/plugin-discord";
@@ -110,6 +113,42 @@ describe("TriggerRegistry (Discord)", () => {
     expect(provenance[0]!.externalId).toBe("msg-1");
     const execution = getExecution(opened.db, provenance[0]!.executionId);
     expect(execution?.flowVersionId).toBe(trigger.flowVersionId);
+  });
+
+  it("sanitizes/bounds the seed but persists the raw message payload byte-identical", async () => {
+    const flow = createFlow(opened.db, "Triggered Flow", triggerGraph());
+    const trigger = createTrigger(opened.db, {
+      flowId: flow.id,
+      flowVersionId: flow.flowVersionId,
+      source: "discord",
+      config: { channelIds: ["c1"] },
+    });
+    const gateway = new FakeGateway();
+    const registry = buildRegistry(() => gateway);
+    await registry.start(trigger);
+
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const rawContent = `${zeroWidthSpace}${"x".repeat(2500)}`;
+    const message: DiscordGatewayMessage = { id: "msg-1", channelId: "c1", authorId: "u1", authorIsBot: false, content: rawContent };
+    gateway.emit(message);
+    await settle();
+
+    const provenance = listExecutionTriggers(opened.db, trigger.id);
+    expect(provenance).toHaveLength(1);
+    const execution = getExecution(opened.db, provenance[0]!.executionId);
+    expect(execution).toBeDefined();
+
+    // The seed reaches the flow's prompt node clean and bounded to 2000 chars.
+    const responses = listResponses(opened.db, provenance[0]!.executionId);
+    const bResponse = responses.find((r) => r.nodeId === "b");
+    expect(bResponse?.renderedPromptSha).toBeTruthy();
+    const renderedPrompt = getBlob(opened.db, bResponse!.renderedPromptSha!)?.toString("utf-8");
+    expect(renderedPrompt).toBe(`got: ${"x".repeat(2000)}`);
+
+    // The persisted execution_triggers payload is byte-identical to the raw (unsanitized) message.
+    const expectedSha = sha256Of(Buffer.from(JSON.stringify(message), "utf-8"));
+    const persisted = getBlob(opened.db, expectedSha)?.toString("utf-8");
+    expect(persisted).toBe(JSON.stringify(message));
   });
 
   it("ignores a message on a channel not in the trigger's allowlist", async () => {

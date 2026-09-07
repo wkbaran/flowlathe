@@ -29,4 +29,13 @@ server.registerTool(
   async () => ({ content: [{ type: "text", text: "ok" }] }),
 );
 
+// A huge, hidden-character-laden result — exercises `McpClient.callTool`'s own sanitize+bound
+// step (PLAN-SANITIZATION-BOUNDARY.md layer 1), independent of the tool-description sanitization
+// above.
+server.registerTool(
+  "huge_result",
+  { description: "Returns a huge result full of hidden characters.", inputSchema: {} },
+  async () => ({ content: [{ type: "text", text: `${zeroWidthSpace}${"y".repeat(20_000)}` }] }),
+);
+
 await server.connect(new StdioServerTransport());

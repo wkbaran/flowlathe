@@ -38,6 +38,32 @@ describe("FirecrawlClient.scrapeOne", () => {
     expect(result.content).toBe(`${"x".repeat(10)}\n[truncated 10 of 100 chars]`);
   });
 
+  it("strips hidden characters from markdown while keeping the truncation marker intact", async () => {
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const tagChar = String.fromCodePoint(0xe0001);
+    const long = `${"x".repeat(5)}${zeroWidthSpace}${tagChar}${"x".repeat(95)}`;
+    const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ data: { markdown: long } }), { status: 200 }));
+    const client = new FirecrawlClient({ apiKey: "key", fetchImpl, maxChars: 10 });
+    const result = await client.scrapeOne("https://example.com/");
+    expect(result.error).toBeUndefined();
+    // hidden chars stripped before truncation, so the cleaned text (100 chars) still hits the cap
+    expect(result.content).toBe(`${"x".repeat(10)}\n[truncated 10 of 100 chars]`);
+  });
+
+  it("sanitizes the page title", async () => {
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const fetchImpl = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({ data: { markdown: "hi", metadata: { title: `Evil${zeroWidthSpace}Title`, sourceURL: "https://example.com/" } } }),
+          { status: 200 },
+        ),
+    );
+    const client = new FirecrawlClient({ apiKey: "key", fetchImpl });
+    const result = await client.scrapeOne("https://example.com/");
+    expect(result.title).toBe("EvilTitle");
+  });
+
   it("returns a per-URL error rather than throwing on a blocked (private) URL", async () => {
     const client = new FirecrawlClient({ apiKey: "key" });
     const result = await client.scrapeOne("http://127.0.0.1/secret");

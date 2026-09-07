@@ -928,3 +928,53 @@ rediscover them the hard way.
     `execution-gc.test.ts`'s "unrooted blob" case. The first real caller of `put()` beyond tests
     should either root the returned sha in a row GC can see, or this liveness check needs an
     explicit exemption.
+- **PLAN-SANITIZATION-BOUNDARY.md landed a deliberately two-layer sanitization arrangement for
+  untrusted text reaching a model's context — neither layer may be deleted, and both were found
+  missing in real, previously-shipped code before this plan (Firecrawl page content, MCP tool
+  results, the Discord trigger seed all reached a prompt raw and unbounded).**
+  - **Layer 1 (at the source, per field, tight caps) and layer 2 (one generous whole-result cap
+    at `ToolRegistry.invoke`) do different jobs.** Layer 1 exists because layer 2 can't be
+    granular — a single cap can't know a Discord username should be 100 chars and a scraped page
+    20,000. Layer 2 exists because layer 1 is forgettable — it had already been forgotten three
+    times (Firecrawl, MCP, the trigger seed) before this plan. Double-sanitizing is a no-op
+    (`sanitizeUntrustedText` is idempotent), not a hazard — don't "simplify" one layer away because
+    the other looks redundant on some call path.
+  - **`sanitize.ts` moved from `@flowlathe/plugin-common` to `@flowlathe/core`**, specifically so
+    `packages/runtime/src/tool-registry.ts` (the layer-2 choke point) can import it — `runtime`
+    depends on `core` and every `@flowlathe/node-*`, never on `plugin-common` (a helper library
+    *for* plugins, not for what plugins plug into). `plugin-common`'s `sanitize.ts` is now a
+    one-line re-export, so no plugin call site had to change. Same precedent as
+    `url-safety.ts`/`plugin-deps.ts`: a pure primitive consumed by plugins *and* runtime *and*
+    server lives in `core`.
+  - **The function is split**: `scrubUntrustedText` (strip hidden/control chars, flag injection
+    phrasing, no length bound) vs. `sanitizeUntrustedText` (scrub, then bound). A caller that owns
+    its own truncation marker (Firecrawl's `[truncated N of M chars]`) must scrub-then-truncate
+    itself, never call `sanitizeUntrustedText` with a `maxLength` — that would silently slice the
+    marker back off. The injection scan always runs on the full scrubbed text, before any
+    truncation, so a match sitting past where a caller later truncates is still flagged.
+  - **The layer-2 cap (`TOOL_RESULT_MAX_CHARS = 32_000`) is set well above Firecrawl's own
+    `DEFAULT_MAX_CHARS` (20,000) plus its JSON envelope, on purpose** — it's a "nothing unbounded
+    reaches a prompt" backstop, not a context-budget limit (that's the Gate node's compaction
+    job), and must stay high enough that it never normally fires. Truncating a JSON envelope
+    (every `toolOk`/`toolFail` result) produces invalid JSON, so tightening this cap later without
+    first making truncation JSON-aware would gut legitimate results layer 1 already bounded
+    correctly.
+  - **`ToolRegistration.trustedResult?: boolean`** is a whitelist of exactly one thing: the
+    built-in `read_state`/`write_state` tools, set by `stateToolset` in
+    `packages/runtime/src/tool-registry.ts` and nothing else. Their data is in-flow state this
+    system itself wrote — sanitizing it would corrupt a value, not defend anything. A plugin must
+    never set this field.
+  - **Sanitize the Discord trigger *seed*, never the persisted `execution_triggers.payload`.**
+    `registry.ts`'s `admitMessage` writes the sanitized/bounded values into `seed` (what the flow
+    graph sees) but still passes the raw `message` to `claimExecutionTrigger` verbatim — that row
+    is a forensic record of what actually arrived, not model context. Getting this backwards would
+    corrupt the dedupe/replay record to protect a prompt.
+  - **Four character ranges were added** to the hidden-character strip list: bidi isolates
+    (U+2066-2069 — the current Trojan Source vector, not covered by the older U+202A-202E
+    embeddings/overrides already there), Unicode tag characters (U+E0000-E007F, astral — the
+    current invisible-ASCII-smuggling vector against LLMs specifically), soft hyphen (U+00AD), and
+    the Mongolian vowel separator (U+180E). The regex is built from numeric code points with the
+    `u` flag specifically so this file's own source never embeds the literal invisible characters
+    it strips — the `u` flag is load-bearing for the astral tag-character range.
+  - **This stops cheap tricks, not a competent injection.** Stripping hidden characters and
+    bounding length raises the floor; don't cite it as a defense against a determined adversary.

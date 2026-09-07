@@ -9,6 +9,7 @@ export * from "./plugin-deps.js";
 export * from "./plugin-manifest.js";
 export * from "./regions.js";
 export * from "./url-safety.js";
+export * from "./sanitize.js";
 export * from "./slug.js";
 export * from "./canonical.js";
 export * from "./diff.js";

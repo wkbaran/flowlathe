@@ -1,4 +1,4 @@
-import { checkUrlSafety } from "@flowlathe/core";
+import { checkUrlSafety, sanitizeUntrustedText, scrubUntrustedText } from "@flowlathe/core";
 import { httpGetJson, requestJson } from "@flowlathe/plugin-common";
 
 export class FirecrawlError extends Error {}
@@ -110,7 +110,11 @@ export class FirecrawlClient {
     const finalUrl = data?.metadata?.sourceURL ?? url;
     this.assertUrlSafe(finalUrl);
     const raw = data?.markdown ?? data?.html ?? "";
-    return { url: finalUrl, title: data?.metadata?.title, content: truncate(raw, maxChars) };
+    // scrub, then truncate — in that order: truncate appends the `[truncated N of M chars]`
+    // marker, and a sanitizeUntrustedText(x, maxChars) call would silently slice it back off.
+    const content = truncate(scrubUntrustedText(raw, "firecrawl page"), maxChars);
+    const title = data?.metadata?.title !== undefined ? sanitizeUntrustedText(data.metadata.title, 500, "firecrawl page") : undefined;
+    return { url: finalUrl, title, content };
   }
 
   /** Never throws — a dead link in a batch produces `{url, error}` in its slot, per

@@ -51,6 +51,50 @@ describe("createToolRegistry", () => {
     expect(result).toBe("[boom]: error - kaboom");
   });
 
+  it("layer 2: bounds and strips hidden characters from a handler's result", async () => {
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const registry = createToolRegistry([
+      {
+        toolset: "a",
+        spec: spec("huge"),
+        handler: () => `${zeroWidthSpace}${"y".repeat(50_000)}`,
+      },
+    ]);
+    const result = await registry.invoke("huge", {}, { activationKey: "node-1" });
+    expect(result).not.toContain(zeroWidthSpace);
+    expect(result.length).toBeLessThan(50_000);
+  });
+
+  it("layer 2: a trustedResult registration's result passes through byte-identical", async () => {
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const huge = `${zeroWidthSpace}${"y".repeat(50_000)}`;
+    const registry = createToolRegistry([
+      {
+        toolset: "state",
+        spec: spec("trusted"),
+        trustedResult: true,
+        handler: () => huge,
+      },
+    ]);
+    const result = await registry.invoke("trusted", {}, { activationKey: "node-1" });
+    expect(result).toBe(huge);
+  });
+
+  it("layer 2: sanitizes a thrown handler error's message too", async () => {
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const registry = createToolRegistry([
+      {
+        toolset: "a",
+        spec: spec("boom"),
+        handler: () => {
+          throw new Error(`vendor said${zeroWidthSpace}: nope`);
+        },
+      },
+    ]);
+    const result = await registry.invoke("boom", {}, { activationKey: "node-1" });
+    expect(result).toBe("[boom]: error - vendor said: nope");
+  });
+
   it("delegates missingToolsets to the shared core helper over its own registrations", () => {
     const registry = createToolRegistry([
       { toolset: "a", spec: spec("tool_a"), handler: () => "a", unavailableReason: () => "not ready" },

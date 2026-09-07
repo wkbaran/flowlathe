@@ -58,6 +58,12 @@ export interface ToolRegistration {
    *  connected"), or undefined/omitted when it's ready. A toolset with no external dependency
    *  (e.g. the built-in "state" toolset) simply never sets this. */
   unavailableReason?: () => string | undefined;
+  /** Whitelist of exactly one thing: set ONLY by the built-in state toolset (`stateToolset` in
+   *  `@flowlathe/runtime`), never by a plugin. `read_state`/`write_state` return in-flow data
+   *  this system itself wrote — stripping characters out of it, or truncating it, corrupts a
+   *  value rather than defending anything. See `createToolRegistry`'s `invoke` in
+   *  `@flowlathe/runtime`, the one place this is read, and PLAN-SANITIZATION-BOUNDARY.md §3.3. */
+  trustedResult?: boolean;
   /** How an exported, server-less script can reconstruct this toolset from environment alone.
    *  Absent ⇒ the toolset is server-only (e.g. Spotify's OAuth tokens or an MCP server's config
    *  file live in this server's DB/filesystem) and a compiled script using it refuses to run —

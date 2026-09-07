@@ -4,6 +4,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { validateStdioServerConfig } from "./security.js";
+import { sanitizeMcpToolResult } from "./sanitize.js";
 
 /** The SDK's `StreamableHTTPClientTransport`/`SSEClientTransport` declare a `sessionId` getter
  *  typed `string | undefined` against a `Transport.sessionId?: string` interface field — under
@@ -118,7 +119,11 @@ export class McpClient {
     const client = await this.connect();
     try {
       const result = await client.callTool({ name, arguments: args });
-      return JSON.stringify(result.content);
+      // `result.content` is server-controlled and may include base64 image data — sanitized and
+      // bounded here (in the client, not the toolset handler) so any future caller of this class
+      // gets the same protection. See CLAUDE.md/PLAN-SANITIZATION-BOUNDARY.md: sanitizing a
+      // server's tool descriptions while leaving its results raw is close to meaningless.
+      return sanitizeMcpToolResult(JSON.stringify(result.content));
     } finally {
       await client.close();
     }

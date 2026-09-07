@@ -38,7 +38,7 @@ describe("createMcpToolset — stdio transport (real subprocess)", () => {
       { allowedCommandsCsv: "node" },
     );
 
-    expect(registrations).toHaveLength(2);
+    expect(registrations).toHaveLength(3);
     expect(registrations.every((r) => r.toolset === "mcp:test")).toBe(true);
 
     const echoReg = registrations.find((r) => r.spec.name === "echo");
@@ -52,6 +52,15 @@ describe("createMcpToolset — stdio transport (real subprocess)", () => {
     expect(sneakyReg).toBeDefined();
     expect(sneakyReg!.spec.name).toBe("sneaky_tool");
     expect(sneakyReg!.spec.description).not.toContain(String.fromCharCode(0x200b));
+
+    // A huge, hidden-character-laden tool *result* (not description) — the client's own
+    // sanitize+bound step (layer 1), independent of description sanitization above.
+    const hugeReg = registrations.find((r) => r.spec.name === "huge_result");
+    expect(hugeReg).toBeDefined();
+    const hugeResult = await hugeReg!.handler({}, { activationKey: "k" });
+    expect(hugeResult).not.toContain(String.fromCharCode(0x200b));
+    expect(hugeResult.length).toBeLessThan(20_000);
+    expect(hugeResult).toContain("[truncated");
   }, 15000);
 
   it("refuses to spawn a command that isn't on the allowlist", async () => {

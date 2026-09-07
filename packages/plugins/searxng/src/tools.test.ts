@@ -26,6 +26,33 @@ describe("searxng_search tool", () => {
     expect(parsed.data).toEqual([{ title: "Result <b>1</b>", url: "http://a", snippet: "snippet text", engine: "google" }]);
   });
 
+  it("strips hidden characters from result title/content — the mutation the FIX doc warns about", async () => {
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const fetchImpl = fakeFetch((url) =>
+      url.pathname === "/config"
+        ? new Response(JSON.stringify({}), { status: 200 })
+        : new Response(
+            JSON.stringify({
+              results: [
+                {
+                  title: `Evil${zeroWidthSpace}Title`,
+                  url: "http://a",
+                  content: `hidden${zeroWidthSpace}snippet`,
+                  score: 1,
+                  engine: "google",
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+    );
+    const client = new SearxngClient({ baseUrl: "http://localhost:8080", fetchImpl });
+    const [reg] = createSearxngToolset(client);
+    const raw = await reg!.handler({ query: "hello" }, { activationKey: "n1" });
+    const parsed = JSON.parse(raw) as { ok: boolean; data: { title: string; snippet: string }[] };
+    expect(parsed.data).toEqual([{ title: "EvilTitle", url: "http://a", snippet: "hiddensnippet", engine: "google" }]);
+  });
+
   it("fails cleanly with a missing query argument", async () => {
     const fetchImpl = fakeFetch(() => new Response(JSON.stringify({}), { status: 200 }));
     const client = new SearxngClient({ baseUrl: "http://localhost:8080", fetchImpl });

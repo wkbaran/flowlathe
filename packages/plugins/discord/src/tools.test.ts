@@ -60,6 +60,25 @@ describe("discord_read_messages tool", () => {
     const parsed = JSON.parse(raw) as { ok: boolean; data: { id: string; author: string; content: string }[] };
     expect(parsed).toEqual({ ok: true, data: [{ id: "m1", author: "alice", content: "hello world", timestamp: "t" }] });
   });
+
+  it("strips hidden characters from message content/author — the mutation the FIX doc warns about", async () => {
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    const fetchImpl = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify([
+            { id: "m1", author: { id: "u1", username: `alice${zeroWidthSpace}` }, content: `hello${zeroWidthSpace}world`, timestamp: "t" },
+          ]),
+          { status: 200 },
+        ),
+    );
+    const client = new DiscordClient({ botToken: "t", fetchImpl });
+    const opts: DiscordToolsetOptions = { allowedChannelIds: new Set(["c1"]) };
+    const tool = toolByName(createDiscordToolset(client, opts), "discord_read_messages");
+    const raw = await tool.handler({ channelId: "c1" }, { activationKey: "n1" });
+    const parsed = JSON.parse(raw) as { ok: boolean; data: { id: string; author: string; content: string }[] };
+    expect(parsed).toEqual({ ok: true, data: [{ id: "m1", author: "alice", content: "helloworld", timestamp: "t" }] });
+  });
 });
 
 describe("discord_react tool", () => {

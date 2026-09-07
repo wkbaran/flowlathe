@@ -1,6 +1,7 @@
 import {
   findMissingToolsets,
   requiredToolsets,
+  sanitizeUntrustedText,
   validateGraph,
   type FlowGraph,
   type FlowNode,
@@ -154,10 +155,17 @@ export class TriggerRegistry {
       return;
     }
 
+    // Sanitize/bound the SEED only — `message` itself still goes to `claimExecutionTrigger`
+    // below verbatim, since that's a forensic record of what actually arrived, not model context.
     const seed: Record<string, Record<string, string>> = {};
     for (const node of graph.nodes) {
       if (node.type === "trigger" && (node.data as { source?: string })["source"] === "discord") {
-        seed[node.id] = { content: message.content, authorId: message.authorId, channelId: message.channelId, messageId: message.id };
+        seed[node.id] = {
+          content: sanitizeUntrustedText(message.content, 2000, "discord trigger"),
+          authorId: sanitizeUntrustedText(message.authorId, 64, "discord trigger"),
+          channelId: sanitizeUntrustedText(message.channelId, 64, "discord trigger"),
+          messageId: sanitizeUntrustedText(message.id, 64, "discord trigger"),
+        };
       }
     }
 

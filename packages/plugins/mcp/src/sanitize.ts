@@ -1,4 +1,4 @@
-import { sanitizeUntrustedText } from "@flowlathe/plugin-common";
+import { sanitizeUntrustedText, scrubUntrustedText } from "@flowlathe/plugin-common";
 
 /**
  * An MCP server's tool names/descriptions are untrusted text landing directly in a model's
@@ -12,6 +12,7 @@ import { sanitizeUntrustedText } from "@flowlathe/plugin-common";
 
 const DEFAULT_TOOL_NAME_MAX_LENGTH = 128;
 const DEFAULT_TOOL_DESCRIPTION_MAX_LENGTH = 1024;
+const DEFAULT_TOOL_RESULT_MAX_LENGTH = 8_000;
 
 export function sanitizeMcpToolDescription(description: string, maxLength = DEFAULT_TOOL_DESCRIPTION_MAX_LENGTH): string {
   return sanitizeUntrustedText(description, maxLength, "mcp");
@@ -22,6 +23,15 @@ export function sanitizeMcpToolDescription(description: string, maxLength = DEFA
  *  server can't smuggle control characters or excessive length into a provider request. Kept
  *  here rather than in the shared module: this is an identifier-charset constraint, not the
  *  hidden-char/injection-pattern concern `sanitizeUntrustedText` addresses. */
+/** An MCP tool's result — `result.content`, JSON-stringified — has no cap and no scrub from the
+ *  SDK, and may include base64 image data. `scrub`-then-truncate (matching Firecrawl's ordering),
+ *  with a truncation marker so a model handed half a JSON array can at least tell. */
+export function sanitizeMcpToolResult(text: string, maxLength = DEFAULT_TOOL_RESULT_MAX_LENGTH): string {
+  const cleaned = scrubUntrustedText(text, "mcp tool result");
+  if (cleaned.length <= maxLength) return cleaned;
+  return `${cleaned.slice(0, maxLength)}\n[truncated ${maxLength} of ${cleaned.length} chars]`;
+}
+
 export function sanitizeMcpToolName(name: string, maxLength = DEFAULT_TOOL_NAME_MAX_LENGTH): string {
   const trimmed = name.trim();
   const cleaned = trimmed.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, maxLength);
