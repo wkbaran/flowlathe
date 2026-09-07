@@ -1,0 +1,97 @@
+import { allOrCancel, createRunControl, type RunEvent } from "@flowlathe/core";
+import {
+  createContextStore,
+  createLlmConfigStore,
+  createRun,
+  createStateStore,
+  createSuspendRegistry,
+  createToolRegistry,
+  InMemoryBlobStore,
+  stateToolset,
+} from "@flowlathe/runtime";
+import { SimpleScheduler, MockProviderAdapter } from "@flowlathe/providers";
+
+const N = {
+  n_seed: {"id":"seed","template":"a","providerId":"mock","modelId":"m","enableStateTools":false,"enabledToolsets":[]} as const,
+  n_outerRouter: {"id":"outerRouter","routes":["a","b"],"cases":[{"value":"a","route":"a"},{"value":"b","route":"b"}]} as const,
+  n_innerRouter: {"id":"innerRouter","routes":["x","y"],"cases":[{"value":"a","route":"x"},{"value":"other","route":"y"}]} as const,
+  n_innerX: {"id":"innerX","template":"INNERX: {{v}}","providerId":"mock","modelId":"m","enableStateTools":false,"enabledToolsets":[]} as const,
+  n_innerY: {"id":"innerY","template":"INNERY: {{v}}","providerId":"mock","modelId":"m","enableStateTools":false,"enabledToolsets":[]} as const,
+  n_innerMerge: {"id":"innerMerge"} as const,
+  n_innerFinal: {"id":"innerFinal","template":"IF: {{v}}","providerId":"mock","modelId":"m","enableStateTools":false,"enabledToolsets":[]} as const,
+  n_otherBranch: {"id":"otherBranch","template":"OTHER: {{v}}","providerId":"mock","modelId":"m","enableStateTools":false,"enabledToolsets":[]} as const,
+  n_outerMerge: {"id":"outerMerge"} as const,
+  n_finalConsumer: {"id":"finalConsumer","template":"DONE: {{v}}","providerId":"mock","modelId":"m","enableStateTools":false,"enabledToolsets":[]} as const,
+} as const;
+
+const STATE_DECLS = [];
+
+// Plugin toolsets with no standalone reconstruction (e.g. "spotify": its OAuth tokens live in
+// this server's DB) aren't supported in exported scripts — a compiled script has no server, DB,
+// or credential store to source them from. A flow using one still exports (the script is a
+// faithful record of the graph), but refuses to run rather than crashing confusingly on a node
+// that expects tools no registry here will ever provide. Toolsets with a standalone
+// reconstruction (e.g. SearXNG, Firecrawl — see the imports above, driven entirely by env vars) are wired into the tool registry below instead.
+const REQUIRED_PLUGIN_TOOLSETS = [];
+
+async function main() {
+  if (REQUIRED_PLUGIN_TOOLSETS.length > 0) {
+    console.error(
+      `this flow requires plugin toolset(s) not supported in exported scripts: ${REQUIRED_PLUGIN_TOOLSETS.join(", ")}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const scheduler = new SimpleScheduler({
+  "mock": { adapter: new MockProviderAdapter(), maxParallel: 4 },
+  });
+  const emit = (event: RunEvent): void => console.log(JSON.stringify(event));
+  const state = createStateStore(emit, { decls: STATE_DECLS });
+  const cancellation = createRunControl();
+  const rt = createRun({
+    host: {
+      scheduler,
+      blobs: new InMemoryBlobStore(),
+      emit,
+      clock: { now: () => Date.now() },
+      state,
+      llmConfig: createLlmConfigStore(),
+      context: createContextStore(),
+      tools: createToolRegistry([...stateToolset(state)]),
+      cancellation,
+      net: { fetch: globalThis.fetch },
+      ...createSuspendRegistry(cancellation),
+    },
+  });
+
+  let n_innerRouter: Awaited<ReturnType<typeof rt.route>> | undefined;
+  let n_otherBranch: Awaited<ReturnType<typeof rt.prompt>> | undefined;
+  let n_innerX: Awaited<ReturnType<typeof rt.prompt>> | undefined;
+  let n_innerY: Awaited<ReturnType<typeof rt.prompt>> | undefined;
+  let n_innerMerge: Awaited<ReturnType<typeof rt.merge>> | undefined;
+  let n_innerFinal: Awaited<ReturnType<typeof rt.prompt>> | undefined;
+  const n_seed = await rt.prompt(N.n_seed, {  });
+  const n_outerRouter = await rt.route(N.n_outerRouter, { input: n_seed.output });
+  if (n_outerRouter.route === "a") {
+    n_innerRouter = await rt.route(N.n_innerRouter, { input: n_outerRouter.passthrough });
+    if (n_innerRouter.route === "x") {
+      n_innerX = await rt.prompt(N.n_innerX, { v: n_innerRouter?.passthrough });
+    } else if (n_innerRouter.route === "y") {
+      n_innerY = await rt.prompt(N.n_innerY, { v: n_innerRouter?.passthrough });
+    }
+    n_innerMerge = await rt.merge(N.n_innerMerge, { in1: n_innerX?.output, in2: n_innerY?.output });
+    n_innerFinal = await rt.prompt(N.n_innerFinal, { v: n_innerMerge?.output });
+  } else if (n_outerRouter.route === "b") {
+    n_otherBranch = await rt.prompt(N.n_otherBranch, { v: n_outerRouter.passthrough });
+  }
+  const n_outerMerge = await rt.merge(N.n_outerMerge, { in1: n_innerFinal?.output, in2: n_otherBranch?.output });
+  const n_finalConsumer = await rt.prompt(N.n_finalConsumer, { v: n_outerMerge.output });
+
+  rt.finish({ n_finalConsumer: n_finalConsumer.output });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});

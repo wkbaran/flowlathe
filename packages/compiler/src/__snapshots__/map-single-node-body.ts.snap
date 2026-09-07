@@ -1,0 +1,71 @@
+import { allOrCancel, createRunControl, type RunEvent } from "@flowlathe/core";
+import {
+  createContextStore,
+  createLlmConfigStore,
+  createRun,
+  createStateStore,
+  createSuspendRegistry,
+  createToolRegistry,
+  InMemoryBlobStore,
+  stateToolset,
+} from "@flowlathe/runtime";
+import { SimpleScheduler, MockProviderAdapter } from "@flowlathe/providers";
+
+const N = {
+  n_m: {"id":"m","itemsTemplate":"[\"x\",\"y\",\"z\"]","itemPortName":"item","maxConcurrency":3,"maxItems":10} as const,
+  n_body: {"id":"body","template":"got: {{item}}","providerId":"mock","modelId":"m","enableStateTools":false,"enabledToolsets":[]} as const,
+} as const;
+
+const STATE_DECLS = [];
+
+// Plugin toolsets with no standalone reconstruction (e.g. "spotify": its OAuth tokens live in
+// this server's DB) aren't supported in exported scripts — a compiled script has no server, DB,
+// or credential store to source them from. A flow using one still exports (the script is a
+// faithful record of the graph), but refuses to run rather than crashing confusingly on a node
+// that expects tools no registry here will ever provide. Toolsets with a standalone
+// reconstruction (e.g. SearXNG, Firecrawl — see the imports above, driven entirely by env vars) are wired into the tool registry below instead.
+const REQUIRED_PLUGIN_TOOLSETS = [];
+
+async function main() {
+  if (REQUIRED_PLUGIN_TOOLSETS.length > 0) {
+    console.error(
+      `this flow requires plugin toolset(s) not supported in exported scripts: ${REQUIRED_PLUGIN_TOOLSETS.join(", ")}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const scheduler = new SimpleScheduler({
+  "mock": { adapter: new MockProviderAdapter(), maxParallel: 4 },
+  });
+  const emit = (event: RunEvent): void => console.log(JSON.stringify(event));
+  const state = createStateStore(emit, { decls: STATE_DECLS });
+  const cancellation = createRunControl();
+  const rt = createRun({
+    host: {
+      scheduler,
+      blobs: new InMemoryBlobStore(),
+      emit,
+      clock: { now: () => Date.now() },
+      state,
+      llmConfig: createLlmConfigStore(),
+      context: createContextStore(),
+      tools: createToolRegistry([...stateToolset(state)]),
+      cancellation,
+      net: { fetch: globalThis.fetch },
+      ...createSuspendRegistry(cancellation),
+    },
+  });
+
+  const n_m = await rt.map(N.n_m, {  }, async (item, i) => {
+    const bodyResult = await rt.prompt({ ...N.n_body, id: `body@m:${i}`, contextNodeId: "body" }, { item: item });
+    return bodyResult.output;
+  });
+
+  rt.finish({ n_m: JSON.stringify(n_m) });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});
