@@ -34,9 +34,13 @@ rediscover them the hard way.
   schema" section up front**, not just the tables slice 0 touches. That schema was already fully
   specified in the plan (not something this agent designed), and SQLite/drizzle migrations make
   incremental `ALTER TABLE` additions more painful than just generating the whole thing once via
-  `drizzle-kit generate`. Tables like `branches`/`snapshots` have a circular FK relationship
-  (`branches.forked_from_snapshot_id → snapshots.id`, `snapshots.branch_id → branches.id`); SQLite
-  is fine with this since it doesn't validate FK targets at `CREATE TABLE` time.
+  `drizzle-kit generate`. **Correction (PLAN-EXECUTION-RETENTION.md audit):** this used to claim
+  `branches`/`snapshots` have a circular FK relationship
+  (`branches.forked_from_snapshot_id → snapshots.id`, `snapshots.branch_id → branches.id`) — that
+  was wrong. `branches.forkedFromSnapshotId` and `snapshots.parentSnapshotId` are both plain
+  columns with no `.references()` at all (verified against `schema.ts` directly); the only real
+  FK is `snapshots.branchId → branches.id`, one direction, no cycle. There was never anything to
+  fear here.
 - **`@flowlathe/core` must stay genuinely isomorphic — no `Buffer`, no `node:*` imports,
   anywhere in it.** Workspace packages resolve to raw `.ts` source (not built `.d.ts`), so
   `tsc --noEmit` in `packages/web` pulls in *all* of core's source transitively through
@@ -845,3 +849,23 @@ rediscover them the hard way.
     for real (no mocking) end-to-end through the HTTP routes
     (`routes/flows-versioning.test.ts`'s "git history (Layer 2, S6)" block). Left as a tracked gap,
     not a hidden one.
+- **PLAN-EXECUTION-RETENTION.md landed execution-history retention and mark-and-sweep blob GC**
+  (`deleteExecution`/`gcExecutions`/`gcFlowHistory` in `@flowlathe/persistence`, a boot+24h server
+  timer, and `flowlathe gc`). Two things worth knowing before touching any of this:
+  - **A snapshot's blob refs are not FKs.** `snapshots.payload_json` embeds
+    `{kind:"value", ref:"<sha>"}` entries (`stepper.ts:28`) that no FK column tracks — the eighth,
+    invisible root of the blob-liveness graph. `collectSnapshotBlobRefs`
+    (`packages/persistence/src/execution-gc.ts`) is the single source of truth for "what refs does
+    a snapshot payload contain"; it's used both to find candidates when an execution is deleted and
+    to subtract still-alive refs from a surviving execution's payload before the sweep runs. Any
+    code that ever needs to reason about blob liveness must go through it — a second, hand-rolled
+    walker would inevitably drift from this one in the fatal direction (finding fewer refs than it
+    should, i.e. treating a live blob as dead).
+  - **`SqliteBlobStore.put()` (`packages/persistence/src/sqlite-blob-store.ts`) produces an
+    unrooted blob** — nothing but content-addressing ties it to anything GC can see. Because blobs
+    are content-addressed, `put()`-ing bytes identical to a value some execution already owns
+    returns the *same row*, and deleting that execution collects it out from under the unrelated
+    caller that also holds that sha — pinned as expected (not a bug) by
+    `execution-gc.test.ts`'s "unrooted blob" case. The first real caller of `put()` beyond tests
+    should either root the returned sha in a row GC can see, or this liveness check needs an
+    explicit exemption.

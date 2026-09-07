@@ -642,7 +642,12 @@ flowlathe's version, deliberately smaller:
 - Skip recovery entirely when the cursor is absent (a brand-new trigger starts at "now"), so
   enabling a trigger doesn't replay a channel's backlog.
 - Retention: Hermes prunes at 30 days. `execution_triggers` rows are cheap and carry real
-  provenance — keep them, and prune only cursors for channels no longer allowlisted.
+  provenance — keep them, and prune only cursors for channels no longer allowlisted. This is
+  correct within this plan's own scope — don't prune `execution_triggers` on a schedule of its
+  own. Execution retention (PLAN-EXECUTION-RETENTION.md) is a strictly outer policy: it deletes
+  an `execution_triggers` row only as part of deleting its whole execution, once that execution
+  is old enough that the Discord recovery scan's window (`recoveryWindowSeconds` above, default
+  900s) has long since closed — by then the row's dedupe value is already zero.
 
 ---
 
