@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   requiredToolsets,
   terminalNodeIds,
@@ -67,6 +68,10 @@ interface RegionCtx {
   ownerId: string | undefined;
   incoming: Map<string, Map<string, IncomingEdge>>;
   routerBranches: Map<string, RouterBranch[]>;
+  /** Generated identifiers for every node in the whole graph (not just this region) — see
+   *  `buildVarNames`. Built once in `compileGraph` and threaded unchanged through every child
+   *  region, since the spec table `N` it names is global. */
+  varNames: Map<string, string>;
   order: string[];
   scopes: Map<string, Scope>;
   hasControlFlow: boolean;
@@ -94,7 +99,10 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
     throw new Error(`invalid flow graph: ${problems.join("; ")}`);
   }
 
-  const topCtx = buildRegionCtx(graph, nodesById, undefined, undefined, []);
+  const varNames = buildVarNames(graph.nodes);
+  const nameOf = (id: string): string => varNames.get(id)!;
+
+  const topCtx = buildRegionCtx(graph, nodesById, undefined, undefined, [], varNames);
   const statements = emitRegion(topCtx, "  ").join("\n");
 
   const topIds = new Set(topCtx.order);
@@ -107,12 +115,12 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   const specEntries = graph.nodes
     .map((node) => {
       const data = schemaTable[node.type].parse(node.data) as Record<string, unknown>;
-      return `  ${varName(node.id)}: ${JSON.stringify({ id: node.id, ...data })} as const,`;
+      return `  ${nameOf(node.id)}: ${JSON.stringify({ id: node.id, ...data })} as const,`;
     })
     .join("\n");
 
   const finishBindings = terminalIdsTop
-    .map((id) => `${varName(id)}: ${accessorExpr(nodesById.get(id)!, varName(id), isOptionalTop(id))}`)
+    .map((id) => `${nameOf(id)}: ${accessorExpr(nodesById.get(id)!, nameOf(id), isOptionalTop(id))}`)
     .join(", ");
 
   const usedProviderIds = [...new Set(graph.nodes.map((n) => n.data["providerId"] as string))].filter(
@@ -239,6 +247,7 @@ function buildRegionCtx(
   ownerId: string | undefined,
   injected: { port: string; expr: string } | undefined,
   loopStack: LoopFrame[],
+  varNames: Map<string, string>,
 ): RegionCtx {
   const regionIds = new Set(graph.nodes.filter((n) => (n.parentId ?? undefined) === ownerId).map((n) => n.id));
   const regionNodes = graph.nodes.filter((n) => regionIds.has(n.id));
@@ -260,7 +269,7 @@ function buildRegionCtx(
   const scopes = hasControlFlow ? computeScopes(order, incoming, routerBranches) : new Map<string, Scope>();
   const terminalId = ownerId !== undefined ? terminalNodeIds(graph, ownerId)[0] : undefined;
 
-  return { graph, nodesById, ownerId, incoming, routerBranches, order, scopes, hasControlFlow, levels, injected, loopStack, terminalId };
+  return { graph, nodesById, ownerId, incoming, routerBranches, varNames, order, scopes, hasControlFlow, levels, injected, loopStack, terminalId };
 }
 
 /** A region's terminal node compiles to the fixed local name `bodyResult` rather than the usual
@@ -269,7 +278,7 @@ function buildRegionCtx(
  *  case) and a multi-node body compile through the exact same machinery. Every other node in a
  *  region uses the ordinary `n_<id>` convention. */
 function emitName(nodeId: string, ctx: RegionCtx): string {
-  return nodeId === ctx.terminalId ? "bodyResult" : varName(nodeId);
+  return nodeId === ctx.terminalId ? "bodyResult" : ctx.varNames.get(nodeId)!;
 }
 
 function guardEquals(a: Guard, b: Guard): boolean {
@@ -439,7 +448,14 @@ function emitLoopOrMap(node: FlowNode, ctx: RegionCtx, isOptional: (id: string) 
   const ownBindings = ownPorts.map((port) => bindPort(node.id, port, ctx, isOptional)).join(", ");
 
   const childLoopStack = [...ctx.loopStack, { loopId: node.id, indexVar }];
-  const childCtx = buildRegionCtx(ctx.graph, ctx.nodesById, node.id, { port: injectedPort, expr: injectedExpr }, childLoopStack);
+  const childCtx = buildRegionCtx(
+    ctx.graph,
+    ctx.nodesById,
+    node.id,
+    { port: injectedPort, expr: injectedExpr },
+    childLoopStack,
+    ctx.varNames,
+  );
   const bodyIndent = indent + "  ";
   const bodyLines = emitRegion(childCtx, bodyIndent);
 
@@ -482,7 +498,7 @@ function bindPort(nodeId: string, port: string, ctx: RegionCtx, isOptional: (id:
   const edge = ctx.incoming.get(nodeId)?.get(port);
   if (edge) {
     const sourceNode = ctx.nodesById.get(edge.source)!;
-    return `${port}: ${accessorExpr(sourceNode, varName(edge.source), isOptional(edge.source), edge.sourceHandle)}`;
+    return `${port}: ${accessorExpr(sourceNode, ctx.varNames.get(edge.source)!, isOptional(edge.source), edge.sourceHandle)}`;
   }
   if (ctx.injected && ctx.injected.port === port) return `${port}: ${ctx.injected.expr}`;
   throw new Error(`node "${nodeId}" has no incoming edge bound to input "${port}"`);
@@ -502,8 +518,8 @@ function callExpr(nodeId: string, ctx: RegionCtx, isOptional: (id: string) => bo
  *  `contextNodeId` pinned to the node's own (unscoped) id, so a repeatedly-dispatched body node's
  *  conversation memory accumulates across iterations instead of resetting each time (CLAUDE.md). */
 function specExpr(nodeId: string, ctx: RegionCtx): string {
-  if (ctx.loopStack.length === 0) return `N.${varName(nodeId)}`;
-  return `{ ...N.${varName(nodeId)}, id: ${scopedIdExpr(nodeId, ctx.loopStack)}, contextNodeId: ${JSON.stringify(nodeId)} }`;
+  if (ctx.loopStack.length === 0) return `N.${ctx.varNames.get(nodeId)!}`;
+  return `{ ...N.${ctx.varNames.get(nodeId)!}, id: ${scopedIdExpr(nodeId, ctx.loopStack)}, contextNodeId: ${JSON.stringify(nodeId)} }`;
 }
 
 /** Mirrors the interpreter's `activationKey(nodeId, scopePath)` format
@@ -572,6 +588,53 @@ function adapterCtor(providerId: string, config: ProviderConfig): string {
   return `new OpenAiCompatAdapter({ baseUrl: ${JSON.stringify(config.baseUrl ?? "")}, apiKey: process.env[${JSON.stringify(envVar)}] })`;
 }
 
-function varName(nodeId: string): string {
-  return `n_${nodeId.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+/** Generated identifiers for a graph's nodes: injective, deterministic, and independent of
+ *  `graph.nodes` order. `n_<sanitized id>` maps many distinct ids onto one name (`a-b`, `a.b`
+ *  and `a_b` all sanitize to `n_a_b`), which used to silently produce a duplicate key in the
+ *  global spec table `N` — last-wins, so a node ran with another node's spec — see
+ *  PLAN-COMPILER-VARNAME.md. Every id whose sanitized base is claimed by more than one node
+ *  gets a hash suffix; a base claimed by exactly one node is left alone, so a graph with no
+ *  collision compiles to byte-identical output as before.
+ *
+ *  `node:crypto` is fine here: `@flowlathe/compiler` is Node-only (consumed by the cli, server,
+ *  and testing packages, never bundled for the browser) — CLAUDE.md's no-`node:*`-imports rule
+ *  is scoped to `@flowlathe/core`. */
+function buildVarNames(nodes: FlowNode[]): Map<string, string> {
+  const base = (id: string): string => `n_${id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+
+  const idsByBase = new Map<string, string[]>();
+  for (const node of nodes) {
+    const b = base(node.id);
+    idsByBase.set(b, [...(idsByBase.get(b) ?? []), node.id]);
+  }
+
+  const names = new Map<string, string>();
+  for (const [b, ids] of idsByBase) {
+    if (ids.length === 1) {
+      names.set(ids[0]!, b);
+      continue;
+    }
+    // Order-independent by construction: every claimant's name is a pure function of its own id
+    // (via the hash), never of its position among the other claimants — see D4/D5.
+    for (const id of ids) {
+      const suffix = createHash("sha256").update(id).digest("hex").slice(0, 8);
+      names.set(id, `${b}__${suffix}`);
+    }
+  }
+
+  // An astronomically unlikely residual: a node id that happens to equal another's disambiguated
+  // name. Converted into a loud compile error rather than the silent last-wins collision this
+  // function exists to remove.
+  const idByName = new Map<string, string>();
+  for (const [id, name] of names) {
+    const prior = idByName.get(name);
+    if (prior !== undefined) {
+      throw new Error(
+        `compileGraph: generated identifier "${name}" is claimed by both node "${prior}" and node "${id}" — rename one of them`,
+      );
+    }
+    idByName.set(name, id);
+  }
+
+  return names;
 }

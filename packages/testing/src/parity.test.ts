@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { collidingIdsGraph, collidingIdsResponses } from "./golden/colliding-ids.js";
 import { failingFanOutGraph, failingFanOutResponses } from "./golden/failing-fan-out.js";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
 import { loopRouterBodyGraph, loopRouterBodyResponses } from "./golden/loop-router-body.js";
@@ -205,6 +206,18 @@ describe("interpreter/compiler parity", () => {
       const viaCompiled = traceViaCompiledScript(searchNodeGraph, searchNodeResponses, searchNodeNetTable, searchNodeEnv);
       expect(viaCompiled).toEqual(viaInterpreter);
       expect(viaInterpreter.find((e) => e.nodeId === "final")?.output).toBe("DONE");
+    },
+    15_000,
+  );
+
+  it(
+    "matches for two nodes whose ids collide once sanitized into generated identifiers (top-level + Map body)",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(collidingIdsGraph, collidingIdsResponses);
+      const viaCompiled = traceViaCompiledScript(collidingIdsGraph, collidingIdsResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter.find((e) => e.nodeId === "x_y")?.renderedPrompt).toBe("TOP");
+      expect(viaInterpreter.find((e) => e.nodeId === "x-y@m:0")?.renderedPrompt).toBe("BODY x");
     },
     15_000,
   );

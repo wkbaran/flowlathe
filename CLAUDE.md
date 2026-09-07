@@ -474,10 +474,16 @@ rediscover them the hard way.
   - **A region's terminal node compiles to the fixed local name `bodyResult`, regardless of node
     count** (`compile-graph.ts`'s `emitName`) — every other body node uses the ordinary `n_<id>`
     convention. This was necessary (not just cosmetic) to keep the pre-existing single-node-body
-    compiled output byte-identical (a real regression test asserts this), while still
-    generalizing correctly to a multi-node body's terminal, which can be any node kind — the old
-    code's hardcoded `bodyResult.output` assumed a Prompt-shaped result, which happened to be
-    right by coincidence, not by design.
+    compiled output the same shape as before, while still generalizing correctly to a multi-node
+    body's terminal, which can be any node kind — the old code's hardcoded `bodyResult.output`
+    assumed a Prompt-shaped result, which happened to be right by coincidence, not by design.
+    **Correction (PLAN-COMPILER-VARNAME.md audit):** this used to claim "a real regression test
+    asserts this" [byte-identical output] — untrue at the time (verified: no snapshot mechanism
+    existed anywhere in the repo, and every compiler test was an exact-line `toContain`, which
+    pins individual lines, not the whole output). What now actually enforces it: the `toContain`
+    assertions in `compile-graph-control-flow.test.ts`, plus whole-output snapshots added by that
+    plan (`compile-graph-snapshot.test.ts`, `toMatchFileSnapshot` — the first use of vitest
+    snapshots in this repo).
   - **xyflow (`@xyflow/react` 12.x) treats `Node.parentId` as real subflow containment** — a
     child's `position` is parent-relative, and the parent's own rendered box is sized by its
     `style`, never auto-fit to children. This was already true before this slice (Canvas.tsx's
@@ -1092,3 +1098,71 @@ rediscover them the hard way.
   `requiredNever`. Golden fixtures `router-untaken-map`/`router-untaken-loop`
   (`packages/testing/src/golden/`) pin this, each verified to actually fail pre-fix (a JSON-parse
   crash and a `LoopLimitExceeded`, respectively) before the fix made them pass.
+- **PLAN-COMPILER-VARNAME.md fixed a non-injective identifier-generation bug in the compiler:
+  `compile-graph.ts`'s old free-standing `varName(nodeId)` (`` `n_${id.replace(/[^a-zA-Z0-9_]/g,
+  "_")}` ``) mapped many distinct node ids onto one generated name — `a-b`, `a.b`, `a_b` and
+  `a b` all sanitized to `n_a_b`.** Both authoring surfaces actively permit the colliding shapes
+  (Canvas rename allows hyphens; the DSL lexer admits internal hyphens for merge-rule names), so
+  this was reachable through the product, not just synthetic API input.
+  - **Three failure shapes, one of them completely silent.** Same-region collisions were loud: a
+    fan-out level's destructuring produced a duplicate binding (`SyntaxError`), and a sequential
+    chain produced a duplicate `const` (`SyntaxError`, and the second node's own binding read from
+    itself). The dangerous one was cross-region: two nodes in different lexical scopes (a
+    top-level node and a Loop/Map body node) produce no duplicate *declaration* at all — only the
+    global spec table `N`'s object-literal key collides, which is legal ES2015+, last-one-wins.
+    The shadowed node then silently ran with the OTHER node's spec (wrong template, wrong
+    `providerId`, everything), exited 0, and emitted a plausible-looking `node_finished` event —
+    no crash, no warning. The interpreter was never affected (it keys everything by the real node
+    id); this was a pure compiler-side divergence.
+  - **Fix: `buildVarNames(nodes)` replaces `varName`, building one map globally over
+    `graph.nodes`** (never per-region — a per-region map would leave the silent cross-region
+    shape completely unfixed while making every loud same-region shape go away, i.e. it would
+    look like a complete fix and be the exact opposite of one). A sanitized base claimed by
+    exactly one node keeps the plain `n_<base>` name (so a graph with no collision compiles to
+    byte-identical output as before — verified via whole-output snapshots, see the corrected
+    `bodyResult` entry above); a base claimed by ≥2 nodes gives **every** claimant a hash suffix
+    (`` `${base}__${sha256(id).slice(0,8)}` ``), never "first one keeps the plain name" — that
+    would make emitted names depend on `graph.nodes` array order (a canvas drag or DSL reformat
+    reordering nodes would then churn every downstream name in the diff for no semantic reason).
+    The map is threaded through `RegionCtx.varNames` (built once in `compileGraph`, passed
+    unchanged into every child region `buildLoopOrMap` constructs) rather than recomputed, so
+    there is exactly one source of truth for every node's generated name across all six call
+    sites that used to call the free `varName` function directly.
+  - **A residual collision (a node id that happens to equal another's disambiguated name) is a
+    loud compile-time throw, not a silent fallback** — `buildVarNames` asserts its output map's
+    values are all distinct before returning. Astronomically unlikely in practice, but three lines
+    to convert into an actionable error rather than reintroducing exactly the bug class this fix
+    removes.
+  - **`node:crypto` in `@flowlathe/compiler` is fine and deliberate, not an exception to the
+    isomorphic rule** — that rule (see the `@flowlathe/core` entry above) is scoped to `core`.
+    `@flowlathe/compiler` is Node-only: verified `packages/web` never imports it, and nothing in
+    `core`/`web`'s transitive source graph reaches it either. Its actual consumers (`cli`,
+    `server`, `testing`) are all Node processes.
+  - **The colliding-ids golden parity fixture (`packages/testing/src/golden/colliding-ids.ts`) is
+    order-sensitive in its node array on purpose**, to reproduce the silent (not crashing) pre-fix
+    failure: the global spec table's last-wins semantics mean whichever colliding node is declared
+    *last* in `graph.nodes` determines which template BOTH nodes silently ran with pre-fix.
+    Declaring them in the other order instead crashes the pre-fix compiler with a missing-
+    template-variable error the moment the wrong node's template needs a binding the caller never
+    supplied — a real pre-fix bug too, but a differently-shaped (loud) one than this fixture is
+    pinning. The fixture's mock-response table deliberately registers a *third* entry (the wrong
+    node's actual pre-fix rendered prompt) precisely so the pre-fix compiled script fails as a
+    genuine `renderedPrompt` **mismatch** against the interpreter, rather than crashing with "no
+    mock response registered" — matching this repo's established practice (`router-deep-branch`/
+    `router-nested` were verified the same way) of confirming a regression fixture actually
+    exercises the bug it claims to, before trusting it.
+  - **`adapterCtor`'s identical sanitize-and-collide pattern on `providerId` (`` `FLOWLATHE_APIKEY_
+    ${providerId.replace(/[^a-zA-Z0-9_]/g,"_").toUpperCase()}` ``) is a related but explicitly
+    out-of-scope bug**, left as-is: `open-ai` and `open_ai` collide onto one env var name. Lower
+    severity (an operator-facing env var name, not a program identifier — it degrades to "wrong
+    key used," not "wrong node executed") and a different threat model (provider ids come from a
+    small operator-curated set, not from flow authors), so don't re-file this as new if a future
+    audit rediscovers it.
+  - **Test-suite convention note: this plan introduced `toMatchFileSnapshot` as this repo's first
+    use of vitest snapshots** (`compile-graph-snapshot.test.ts`) — previously zero snapshot files
+    existed anywhere in the monorepo, and every existing compiler test was an exact-line
+    `toContain` assertion. Two graphs are pinned this way (a single-node Map body, a nested-router
+    graph), deliberately not more — a snapshot per shape becomes reviewer-fatigue churn on every
+    legitimate compiler change, and the existing `toContain` assertions already cover
+    shape-specific details. Expect to run with `-u` and review the diff on any future intentional
+    change to `compile-graph.ts`'s emitted output.
