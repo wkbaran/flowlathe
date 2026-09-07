@@ -24,6 +24,43 @@ importers:
         specifier: 5.0.0
         version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
 
+  packages/cli:
+    dependencies:
+      '@flowlathe/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../core
+      '@flowlathe/dsl':
+        specifier: workspace:*
+        version: link:../dsl
+      '@flowlathe/interpreter':
+        specifier: workspace:*
+        version: link:../interpreter
+      '@flowlathe/persistence':
+        specifier: workspace:*
+        version: link:../persistence
+      '@flowlathe/providers':
+        specifier: workspace:*
+        version: link:../providers
+      '@flowlathe/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      tsx:
+        specifier: 4.23.13
+        version: 4.23.13
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
   packages/compiler:
     dependencies:
       '@flowlathe/core':

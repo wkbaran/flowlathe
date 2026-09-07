@@ -1,0 +1,33 @@
+{
+  "name": "@flowlathe/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "types": "src/index.ts",
+  "bin": {
+    "flowlathe": "./bin/flowlathe.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@flowlathe/compiler": "workspace:*",
+    "@flowlathe/core": "workspace:*",
+    "@flowlathe/dsl": "workspace:*",
+    "@flowlathe/interpreter": "workspace:*",
+    "@flowlathe/persistence": "workspace:*",
+    "@flowlathe/providers": "workspace:*",
+    "@flowlathe/runtime": "workspace:*",
+    "tsx": "4.23.13"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.0"
+  }
+}
