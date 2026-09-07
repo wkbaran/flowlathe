@@ -14,6 +14,7 @@ import { ExecutionHub } from "./execution-hub.js";
 import { autoExportIfEmpty, flowsDir as resolveFlowsDir, syncAllFlowFiles, syncFlowFile, watchFlowsDir } from "./flow-store.js";
 import { FlowsHub } from "./flows-hub.js";
 import { discoverMcpToolsets, loadMcpServersConfig } from "./mcp-config.js";
+import { startRetentionTimer } from "./retention.js";
 import { SchedulerRegistry } from "./scheduler-registry.js";
 import { TriggerRegistry } from "./triggers/registry.js";
 
@@ -127,6 +128,11 @@ const stopWatchingFlows = watchFlowsDir(flowsDir, (slug) => {
   flowsHub.publish({ slug });
 });
 
+/** Boot sweep + 24h timer for execution-history retention and blob reclamation — see
+ *  PLAN-EXECUTION-RETENTION.md. Started after `listen()` for the same reason the trigger loop
+ *  below is: a slow first sweep on a large existing DB must never delay serving the UI. */
+const stopRetentionTimer = startRetentionTimer({ db: opened.db });
+
 /** Trigger startup happens *after* the app is listening — a slow or failing Discord gateway
  *  connection must never prevent the server from serving the UI (CLAUDE.md's MCP-discovery
  *  precedent, extended: that one blocks boot because it's synchronous with the tool registry the
@@ -141,6 +147,7 @@ for (const trigger of listTriggers(opened.db).filter((t) => t.enabled)) {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     stopWatchingFlows();
+    stopRetentionTimer();
     triggerRegistry
       .stopAll()
       .catch(() => undefined)
