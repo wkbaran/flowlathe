@@ -10,7 +10,7 @@ Handoff document. Written for an implementing agent picking this up cold.
 
 # Implementation plan — a flow DSL, and what stays in SQLite
 
-**Status:** not started.
+**Status:** done (S1–S5 all landed).
 **Related:** `PLAN-FLOW-VERSIONING.md` (once flows are files, most of "versioning" becomes git plus
 an execution-provenance snapshot — that document depends on this one), `PLAN-INTEGRATIONS.md`
 (a triggered flow is a headless run of a file-backed flow).
@@ -377,18 +377,25 @@ paste-to-import, and node renaming with the warning from §3.4.
 
 ## 9. Definition of done
 
-- [ ] `@flowlathe/dsl` parses and prints every construct: nodes, kinds, positions, properties
+- [x] `@flowlathe/dsl` parses and prints every construct: nodes, kinds, positions, properties
       (including triple-quoted templates), edges, state decls, arbitrarily nested `body` blocks.
-- [ ] Round-trip property test green over the golden corpus + fuzzed random graphs; formatting
+- [x] Round-trip property test green over the golden corpus + fuzzed random graphs; formatting
       idempotent; committed `.flow` fixtures for every golden flow.
-- [ ] Parse/validation errors carry line, column, and an actionable message.
-- [ ] `@flowlathe/cli` with `fmt`, `check`, `export`, `run`, `flows export|import`.
-- [ ] `FLOWLATHE_FLOWS_DIR` file store live; `flow_versions` carries `source_text` + `content_hash`
+- [x] Parse/validation errors carry line, column, and an actionable message.
+- [x] `@flowlathe/cli` with `fmt`, `check`, `export`, `run`, `flows export|import`.
+- [x] `FLOWLATHE_FLOWS_DIR` file store live; `flow_versions` carries `source_text` + `content_hash`
       with `UNIQUE(flow_id, content_hash)`; an unchanged save creates no row.
-- [ ] Step mode still resolves the *current* graph, now from the file, with a regression test.
-- [ ] An execution whose flow file was deleted still shows its graph and its DSL text.
-- [ ] Canvas: live DSL panel, file-backed save with `ifMatch` 409 handling, external-change reload,
+- [x] Step mode still resolves the *current* graph, now from the file, with a regression test.
+- [x] An execution whose flow file was deleted still shows its graph and its DSL text (via
+      `GET /api/executions/:id/flow-source`, reading the pinned version's own `source_text`).
+- [x] Canvas: live DSL panel, file-backed save with `ifMatch` 409 handling, external-change reload,
       paste-to-import, node rename with the history warning.
-- [ ] E2E spec covering canvas→file and file→canvas.
-- [ ] README updated (flows live in `flows/*.flow`; SQLite holds execution history); `CLAUDE.md`
+- [x] E2E spec covering canvas→file and file→canvas (`playwright/tests/slice8-dsl-file-sync.spec.ts`).
+- [x] README updated (flows live in `flows/*.flow`; SQLite holds execution history); `CLAUDE.md`
       updated with what surprised the implementing agent.
+
+**Known, deliberately unresolved gap** (documented in `flow-store.ts` and CLAUDE.md, not silently
+left): a flow created *before* S3 keeps its original UUID id forever (`flow_versions` rows are
+never rewritten); the boot-time auto-export / `flowlathe flows export` mints a fresh slug-named
+file for it, and re-syncing that file back creates a second, separate flow rather than reconciling
+with the original. No reconciliation algorithm is specified by this plan for that transition.

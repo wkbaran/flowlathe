@@ -412,6 +412,25 @@ describe("gate + automatic context accumulation", () => {
   });
 });
 
+describe("an execution's flow, as text, survives the flow file being deleted", () => {
+  it("GET /api/executions/:id/flow-source keeps working after the .flow file is gone", async () => {
+    const flowId = await createTwoNodeFlow();
+    const started = await app.inject({ method: "POST", url: `/api/flows/${flowId}/step-start` });
+    const { executionId } = started.json();
+
+    const before = await app.inject({ method: "GET", url: `/api/executions/${executionId}/flow-source` });
+    expect(before.statusCode).toBe(200);
+    expect(before.json().sourceText).toContain(`flow "Chain"`);
+    expect(before.json().graph.nodes).toHaveLength(2);
+
+    await rm(join(flowsDir, `${flowId}.flow`));
+
+    const after = await app.inject({ method: "GET", url: `/api/executions/${executionId}/flow-source` });
+    expect(after.statusCode).toBe(200);
+    expect(after.json()).toEqual(before.json());
+  });
+});
+
 describe("step debugging", () => {
   it("advances one node per step, exposing the new snapshot each time", async () => {
     const flowId = await createTwoNodeFlow();

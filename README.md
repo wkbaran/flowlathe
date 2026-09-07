@@ -25,6 +25,8 @@ flowlathe is a canvas-based flow builder plus a small runtime and compiler:
 - **Export it** to a standalone, dependency-free TypeScript script. The canvas is for
   building and debugging; the exported script is the deterministic, version-controllable
   artifact you actually ship.
+- **Write it as text.** Every flow is also a `flows/*.flow` file in a small, custom DSL — the
+  canvas edits it live, and it's what actually lands in `git`. See "Flows as text" below.
 
 See [`documentation/WALKTHROUGH.md`](documentation/WALKTHROUGH.md) for a full walkthrough
 with screenshots of every feature described below.
@@ -69,9 +71,10 @@ with screenshots of every feature described below.
 - **Web:** React 18, MUI 9, `@xyflow/react` (React Flow) for the canvas, Vite.
 - **Providers:** Ollama and OpenAI-compatible HTTP APIs, plus a deterministic Mock provider for
   testing and demos.
-- **Monorepo:** pnpm workspaces + Turborepo. Packages: `core`, `interpreter`, `compiler`,
-  `runtime`, `providers`, `persistence`, `server`, `web`, `testing`, one package per node kind
-  under `packages/nodes/*`, and one package per plugin (Spotify, MCP) under `packages/plugins/*`.
+- **Monorepo:** pnpm workspaces + Turborepo. Packages: `core`, `dsl`, `cli`, `interpreter`,
+  `compiler`, `runtime`, `providers`, `persistence`, `server`, `web`, `testing`, one package per
+  node kind under `packages/nodes/*`, and one package per plugin (Spotify, MCP, SearXNG,
+  Firecrawl, Discord) under `packages/plugins/*`.
 - **Tools/MCP:** `@modelcontextprotocol/sdk` for the MCP client (stdio, SSE, and Streamable
   HTTP transports).
 - **Testing:** Vitest for unit/integration tests, Playwright for end-to-end tests.
@@ -82,13 +85,18 @@ Requires Node ≥ 22 and pnpm.
 
 ```bash
 pnpm install
-pnpm build
-node packages/server/dist/index.js
+pnpm --filter @flowlathe/web build
+pnpm --filter @flowlathe/server start
 ```
 
+This repo has no build step for the server itself — every package other than `web` (which needs
+a real Vite bundle to serve) runs straight from its TypeScript source via `tsx`, so there's no
+`dist/` to `node` directly. `pnpm dev` (below) is the same thing with hot reload.
+
 Then open `http://127.0.0.1:4310`. By default the server keeps its SQLite database under
-`packages/server/data/`; set `FLOWLATHE_DB_PATH` and `PORT` to override the database location
-and port respectively.
+`packages/server/data/` and its `.flow` files under `./flows` (relative to wherever the server
+process runs); set `FLOWLATHE_DB_PATH`, `FLOWLATHE_FLOWS_DIR`, and `PORT` to override the
+database location, flows directory, and port respectively.
 
 A **Mock** provider (which echoes its prompt back, prefixed with `[provider:model]`) is
 seeded automatically, so you can build and run a flow end-to-end with no local model server
@@ -173,6 +181,73 @@ allowlist). `DISCORD_RECOVERY_WINDOW_SECONDS` (default 900) and `DISCORD_RECOVER
 50) bound the post-reconnect scan that recovers messages missed during a gateway drop or server
 restart; a message id is only ever admitted once, surviving a restart.
 
+## Flows as text
+
+A flow's source of truth is a `.flow` file — a small custom DSL, not a JSON blob in SQLite. This
+is what makes a one-word prompt-template change show up as a one-line `git diff`, lets a flow be
+authored (by hand, or by a model) as text, and gives flows the tools you already have for text —
+`git log`, `git blame`, branches, PRs, `rg`.
+
+```
+flow "research-brief" {
+  state findings: array merge=append initial=[]
+
+  node extract: prompt @(80, 40) {
+    providerId = "ollama"
+    modelId    = "qwen3.6:27b"
+    template   = """
+      Extract the key claims from the following text.
+
+      {{input}}
+    """
+  }
+}
+```
+
+- **`flows/*.flow`** (`FLOWLATHE_FLOWS_DIR`, default `./flows`) is what the server reads and
+  watches. Editing a file with any text editor, `git checkout`-ing a different revision, or
+  running `flowlathe fmt` all take effect live — the canvas offers to reload when a flow's file
+  changes underneath it, and a running step-debug session picks up the edit on its next step.
+- **The canvas edits the same text live.** Toggle "Text" in a flow's toolbar for a DSL panel that
+  parses on blur (a syntax error leaves the graph untouched and shows the message instead of
+  applying a broken edit); "Import from text" on the flow list pastes a `.flow` file's contents
+  straight into a new (or updated) flow.
+- **SQLite still owns everything about *running* a flow** — executions, branches, per-step
+  snapshots, blobs, state writes, provider credentials. `flow_versions` keeps a content-addressed
+  cache of what was on disk at run time, so an execution's flow is still viewable (as a graph and
+  as text) even if the file is later edited or deleted.
+- **`@flowlathe/cli`** (bin `flowlathe`) is the non-canvas way to work with `.flow` files:
+
+  | Command | Behavior |
+  |---|---|
+  | `flowlathe fmt [files]` | Canonicalize in place; `--check` exits 1 on drift (CI/pre-commit) |
+  | `flowlathe check [files]` | Parse + validate; human-readable errors with line/column |
+  | `flowlathe export <file>` | Emit the standalone TS script (same as the canvas's Export) |
+  | `flowlathe run <file>` | Headless interpreter run, streaming `RunEvent` JSON to stdout |
+  | `flowlathe flows export\|import` | One-shot migration between the DB and `.flow` files |
+
+  Files default to every `*.flow` in `FLOWLATHE_FLOWS_DIR` when none are given. `export`/`run`
+  resolve a flow's provider config from `FLOWLATHE_DB_PATH`'s `providers` table when set, falling
+  back to a plain Ollama adapter per referenced provider id otherwise.
+
+  To keep every committed `.flow` file canonically formatted, add a `pre-commit` git hook:
+
+  ```bash
+  #!/bin/sh
+  files=$(git diff --cached --name-only --diff-filter=ACM -- 'flows/*.flow')
+  [ -z "$files" ] && exit 0
+  node packages/cli/bin/flowlathe.js fmt --check $files
+  ```
+
+  (drop it in `.git/hooks/pre-commit` and `chmod +x` it — this repo has no hook-runner
+  dependency like husky, and one flow author's single hook script doesn't need one either).
+- **A node's id is its DSL name.** Renaming a node (via the canvas's "Node ID" field, or by
+  editing the text directly) changes what past executions refer to by that id — a deliberate,
+  warned-about exception to the rule that ordinary edits never change node identity.
+
+See `PLAN-FLOW-DSL.md` for the full design (grammar, storage model, and the tradeoffs behind
+each of the above).
+
 ## Loop/Map bodies
 
 A Loop/Map body can be an arbitrary multi-node subgraph — any chain, fan-out, or nested
@@ -199,15 +274,19 @@ surprises encountered building each slice.
 ```
 packages/
   core/          zero-I/O contracts and graph types, shared by server and browser
+  dsl/           the flow text format: lexer, parser, canonical printer, formatter
+  cli/           `flowlathe` bin: fmt, check, export, run, flows export|import
   interpreter/   the graph engine that drives node dispatch and readiness
   compiler/      graph -> standalone TypeScript export
   runtime/       context, state, and LLM-config stores; the pieces an exported script imports
   providers/     Mock, Ollama, and OpenAI-compatible provider adapters
   persistence/   SQLite schema and migrations (Drizzle)
-  server/        Fastify API + SSE, serves the built web SPA
+  server/        Fastify API + SSE, serves the built web SPA, watches flows/*.flow
   web/           the canvas SPA (React + React Flow)
   nodes/*/       one package per node kind (prompt, router, merge, loop, map, gate, ...)
+  plugins/*/     one package per plugin (Spotify, MCP, SearXNG, Firecrawl, Discord)
   testing/       shared test fixtures and the interpreter/compiler parity harness
+flows/           flow definitions, as .flow text (FLOWLATHE_FLOWS_DIR)
 playwright/      end-to-end tests
 documentation/   walkthrough and screenshots
 ```

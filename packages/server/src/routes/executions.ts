@@ -3,6 +3,7 @@ import type { Scheduler, ToolRegistration } from "@flowlathe/core";
 import {
   type Db,
   getExecution,
+  getFlowVersionRow,
   getStateSnapshot,
   listBranches,
   listResponses,
@@ -39,6 +40,18 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
       return { execution, responses: listResponses(db, request.params.id, request.query.branchId) };
     },
   );
+
+  /** An execution's flow, as text — even after the flow (or its file) is gone. §4.2/definition-
+   *  of-done: "an execution whose flow file was deleted still shows its graph and its DSL text."
+   *  Deliberately reads the pinned version's own row (`sourceText`), not the live file — an
+   *  execution's own record of what it ran must never drift just because the flow moved on. */
+  app.get<{ Params: { id: string } }>("/api/executions/:id/flow-source", async (request, reply) => {
+    const execution = getExecution(db, request.params.id);
+    if (!execution) return reply.code(404).send({ error: "execution not found" });
+    const version = getFlowVersionRow(db, execution.flowVersionId);
+    if (!version) return reply.code(404).send({ error: "flow version not found" });
+    return { graph: version.graph, sourceText: version.sourceText };
+  });
 
   app.get<{ Params: { id: string } }>("/api/executions/:id/branches", async (request, reply) => {
     const execution = getExecution(db, request.params.id);
