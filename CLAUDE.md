@@ -615,3 +615,35 @@ rediscover them the hard way.
     plugin-shaped e2e spec at all to extend, and building the first one (a fixture SearXNG/
     Firecrawl HTTP server wired into `playwright/playwright.config.ts`) is a separable piece of
     work from getting the node kinds themselves correct and unit/parity-tested.
+- **PLAN-INTEGRATIONS.md Phase D added `@flowlathe/plugin-discord` (outbound tools only —
+  `discord_send_message`/`discord_read_messages`/`discord_react`).** One deliberate scope
+  narrowing from the plan's own §6: the plan describes a bot token "configured by
+  `DISCORD_BOT_TOKEN` at boot **or entered in the UI**", mirroring Spotify's env-or-stored-
+  credential split. This implementation only does the env var path — `discordClientFromEnv`
+  reads `process.env["DISCORD_BOT_TOKEN"]` directly, with no `plugin_credentials` row and no UI
+  form to enter one, matching the simpler pattern SearXNG/Firecrawl already established (their
+  own manifests have no `connect` field either) rather than partially replicating Spotify's
+  OAuth-shaped storage for a credential that isn't OAuth. If a UI credential-entry form is wanted
+  later, `packages/persistence/src/plugin-credentials.ts`'s generic `pluginId -> encrypted
+  string` storage (pluginId `"discord"`) is already there and needs no schema change — only a
+  route + a `getPluginCredential` fallback in `discordClientFromEnv`.
+  - **429 handling reads `retry_after` from the JSON body as a fallback to the `Retry-After`
+    header** — Discord always includes `retry_after` (seconds) in a rate-limit response body,
+    but the header is not guaranteed on every route, so `DiscordClient`'s `request()` tries the
+    header first (via `@flowlathe/providers`'s `retryAfterMsFromHeader`, reused rather than
+    duplicated per the plan's explicit instruction) and falls back to parsing the body.
+  - **`allowed_mentions` is computed once in the constructor and attached to every `sendMessage`
+    call**, never accepted as a per-call tool argument — this is the whole point of the
+    "hermes-agent incident" precedent the plan cites: a per-call parameter is one missed call
+    site away from a model that just read a hostile page pinging the whole server.
+  - **No `unavailableReason` network probe** (unlike SearXNG's `/config` or Firecrawl's `/v2/map`
+    auth check) — Discord has no cheap, side-effect-free health endpoint worth polling on every
+    dependency check. Instead `createDiscordToolset`'s `unavailableReason` reports unavailable
+    whenever the channel allowlist is empty, since every tool call would fail that check anyway;
+    a bad bot token is only discovered on first real use, surfaced through the ordinary
+    `guarded()`-classified tool-result error, not through the workflow-dependency banner.
+  - **No `standalone` field** — Discord is explicitly server-only per the plan's Locked
+    Decisions table, so a compiled script using this toolset refuses to run (same
+    `REQUIRED_PLUGIN_TOOLSETS` path as Spotify/MCP). Nothing extra was needed in `compileGraph`
+    for this; the Phase B `standalone`-partitioning logic already treats "no `standalone` field
+    on any registration for this toolset" as the server-only case by default.

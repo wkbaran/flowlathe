@@ -342,6 +342,25 @@ importers:
         specifier: 5.0.0
         version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
 
+  packages/plugins/discord:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@flowlathe/plugin-common':
+        specifier: workspace:*
+        version: link:../_common
+      '@flowlathe/providers':
+        specifier: workspace:*
+        version: link:../../providers
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
   packages/plugins/firecrawl:
     dependencies:
       '@flowlathe/core':
@@ -488,6 +507,9 @@ importers:
       '@flowlathe/persistence':
         specifier: workspace:*
         version: link:../persistence
+      '@flowlathe/plugin-discord':
+        specifier: workspace:*
+        version: link:../plugins/discord
       '@flowlathe/plugin-firecrawl':
         specifier: workspace:*
         version: link:../plugins/firecrawl

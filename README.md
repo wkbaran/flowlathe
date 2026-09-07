@@ -137,6 +137,15 @@ request is made, and again against the post-redirect final URL — see
 want a flow to reach your own intranet; cloud metadata endpoints (`169.254.169.254` and similar)
 are never reachable regardless of this setting.
 
+To send/read Discord messages, set `DISCORD_BOT_TOKEN` (from a
+[Discord Developer Portal](https://discord.com/developers/docs/topics/oauth2#bots) application)
+and `DISCORD_ALLOWED_CHANNELS` (comma-separated channel ids) — this registers
+`discord_send_message`, `discord_read_messages`, and `discord_react` under the `discord` toolset.
+Leaving `DISCORD_ALLOWED_CHANNELS` unset means no channel is allowed (secure default), even with
+a valid bot token. Mentions of `@everyone`/`@here` and roles are stripped from every message this
+sends unless you explicitly set `DISCORD_ALLOW_MENTION_EVERYONE=1` / `DISCORD_ALLOW_MENTION_ROLES=1`.
+This toolset is outbound-only — there's no way yet for a Discord message to *start* a flow.
+
 ## Loop/Map bodies
 
 A Loop/Map body can be an arbitrary multi-node subgraph — any chain, fan-out, or nested
