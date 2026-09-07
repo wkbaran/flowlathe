@@ -5,14 +5,20 @@ import type { MissingToolset, ToolRegistration } from "./contracts.js";
  *  node kinds and including Loop/Map body nodes — a node's `enabledToolsets` isn't specific to
  *  the "prompt" kind (any future node kind could grow the same field), so this doesn't filter by
  *  `node.type`. "state" is never included: it has no external configuration, so it's never a
- *  workflow "dependency" in the sense this module cares about. */
+ *  workflow "dependency" in the sense this module cares about.
+ *
+ *  Also collects a single `toolset` string field, if present — the `search`/`fetch` node kinds
+ *  each declare which plugin backs them this way (`node.data.toolset`) rather than opting into a
+ *  toolset by name via `enabledToolsets`. Read generically (a string field, not switched on
+ *  `node.type`) so a future node kind with the same convention is covered for free. */
 export function requiredToolsets(graph: FlowGraph): string[] {
   const set = new Set<string>();
   for (const node of graph.nodes) {
-    const enabled = (node.data as { enabledToolsets?: unknown })["enabledToolsets"];
-    if (Array.isArray(enabled)) {
-      for (const t of enabled) if (typeof t === "string") set.add(t);
+    const data = node.data as { enabledToolsets?: unknown; toolset?: unknown };
+    if (Array.isArray(data.enabledToolsets)) {
+      for (const t of data.enabledToolsets) if (typeof t === "string") set.add(t);
     }
+    if (typeof data.toolset === "string") set.add(data.toolset);
   }
   return [...set].sort();
 }

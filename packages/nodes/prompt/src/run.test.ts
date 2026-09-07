@@ -69,6 +69,7 @@ function fakeCtx(overrides: Partial<RuntimeHost> = {}): { ctx: RuntimeHost; even
       replace: (nodeId, messages) => contexts.set(nodeId, messages),
     },
     tools: fakeToolRegistry(state),
+    net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
     ...overrides,
   };
   return { ctx, events };

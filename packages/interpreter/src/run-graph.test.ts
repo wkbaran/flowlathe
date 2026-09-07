@@ -39,6 +39,7 @@ function makeRun(): { run: ReturnType<typeof createRun>; events: RunEvent[]; hos
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
       ...suspendRegistry,
     },
   });
@@ -97,6 +98,7 @@ function identityRun(events: RunEvent[] = []): ReturnType<typeof createRun> {
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
       ...createSuspendRegistry(),
     },
   });
@@ -193,6 +195,7 @@ describe("runGraph — fan-out concurrency", () => {
         llmConfig: createLlmConfigStore(),
         context: createContextStore(),
         tools: createToolRegistry(stateToolset(noopState())),
+        net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
         ...createSuspendRegistry(),
       },
     });
@@ -284,6 +287,7 @@ describe("runGraph — loop", () => {
         llmConfig: createLlmConfigStore(),
         context: createContextStore(),
         tools: createToolRegistry(stateToolset(noopState())),
+        net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
         ...createSuspendRegistry(),
       },
     });
@@ -304,6 +308,7 @@ describe("runGraph — loop", () => {
         llmConfig: createLlmConfigStore(),
         context: contextStore,
         tools: createToolRegistry(stateToolset(noopState())),
+        net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
         ...createSuspendRegistry(),
       },
     });

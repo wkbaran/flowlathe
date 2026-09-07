@@ -1,4 +1,5 @@
 import { extractTemplateVars, type NodeKind } from "@flowlathe/core";
+import { type FetchSpec, FetchNodeDataSchema } from "@flowlathe/node-fetch";
 import { type GateSpec, GateNodeDataSchema } from "@flowlathe/node-gate";
 import { LoopNodeDataSchema } from "@flowlathe/node-loop";
 import { MapNodeDataSchema } from "@flowlathe/node-map";
@@ -6,6 +7,7 @@ import { type MergeSpec, MergeNodeDataSchema } from "@flowlathe/node-merge";
 import { type PauseSpec, PauseNodeDataSchema } from "@flowlathe/node-pause";
 import { type PromptSpec, PromptNodeDataSchema } from "@flowlathe/node-prompt";
 import { type RouterSpec, RouterNodeDataSchema } from "@flowlathe/node-router";
+import { type SearchSpec, SearchNodeDataSchema } from "@flowlathe/node-search";
 import { type UserInputSpec, UserInputNodeDataSchema } from "@flowlathe/node-user-input";
 import type { Run } from "@flowlathe/runtime";
 import type { z } from "zod";
@@ -79,5 +81,17 @@ export const registry: Record<NodeKind, NodeDescriptor> = {
     inputPorts: () => [{ name: "input", required: true }],
     outputPorts: () => ["output"],
     dispatch: async (run, spec, inputs) => ({ output: (await run.gate(spec as GateSpec, inputs)).output }),
+  },
+  search: {
+    schema: SearchNodeDataSchema,
+    inputPorts: (spec) => extractTemplateVars((spec as SearchSpec).queryTemplate).map((name) => ({ name, required: true })),
+    outputPorts: () => ["results"],
+    dispatch: async (run, spec, inputs) => ({ results: (await run.search(spec as SearchSpec, inputs)).results }),
+  },
+  fetch: {
+    schema: FetchNodeDataSchema,
+    inputPorts: (spec) => extractTemplateVars((spec as FetchSpec).urlTemplate).map((name) => ({ name, required: true })),
+    outputPorts: () => ["content"],
+    dispatch: async (run, spec, inputs) => ({ content: (await run.fetch(spec as FetchSpec, inputs)).content }),
   },
 };

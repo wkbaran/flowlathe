@@ -29,6 +29,9 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-fetch':
+        specifier: workspace:*
+        version: link:../nodes/fetch
       '@flowlathe/node-gate':
         specifier: workspace:*
         version: link:../nodes/gate
@@ -50,6 +53,9 @@ importers:
       '@flowlathe/node-router':
         specifier: workspace:*
         version: link:../nodes/router
+      '@flowlathe/node-search':
+        specifier: workspace:*
+        version: link:../nodes/search
       '@flowlathe/node-user-input':
         specifier: workspace:*
         version: link:../nodes/user-input
@@ -82,6 +88,9 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-fetch':
+        specifier: workspace:*
+        version: link:../nodes/fetch
       '@flowlathe/node-gate':
         specifier: workspace:*
         version: link:../nodes/gate
@@ -103,6 +112,9 @@ importers:
       '@flowlathe/node-router':
         specifier: workspace:*
         version: link:../nodes/router
+      '@flowlathe/node-search':
+        specifier: workspace:*
+        version: link:../nodes/search
       '@flowlathe/node-user-input':
         specifier: workspace:*
         version: link:../nodes/user-input
@@ -116,6 +128,25 @@ importers:
       '@flowlathe/providers':
         specifier: workspace:*
         version: link:../providers
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/fetch:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@flowlathe/plugin-firecrawl':
+        specifier: workspace:*
+        version: link:../../plugins/firecrawl
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -224,6 +255,25 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../../core
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.0
+        version: 5.0.0(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.13))
+
+  packages/nodes/search:
+    dependencies:
+      '@flowlathe/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@flowlathe/plugin-searxng':
+        specifier: workspace:*
+        version: link:../../plugins/searxng
       zod:
         specifier: 4.5.4
         version: 4.5.4
@@ -383,6 +433,9 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/node-fetch':
+        specifier: workspace:*
+        version: link:../nodes/fetch
       '@flowlathe/node-gate':
         specifier: workspace:*
         version: link:../nodes/gate
@@ -404,6 +457,9 @@ importers:
       '@flowlathe/node-router':
         specifier: workspace:*
         version: link:../nodes/router
+      '@flowlathe/node-search':
+        specifier: workspace:*
+        version: link:../nodes/search
       '@flowlathe/node-user-input':
         specifier: workspace:*
         version: link:../nodes/user-input

@@ -212,6 +212,7 @@ ${providerEntries}
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry([...stateToolset(state)${standaloneToolsetCalls ? `, ${standaloneToolsetCalls}` : ""}]),
+      net: { fetch: globalThis.fetch },
       ...createSuspendRegistry(),
     },
   });
@@ -521,6 +522,15 @@ function accessorExpr(sourceNode: FlowNode, varRef: string, optional: boolean, s
       return `JSON.stringify(${varRef})`;
     case "router":
       return `${varRef}${dot}passthrough`;
+    // `search`/`fetch` are read via an explicit `sourceHandle` ("results"/"content") whenever a
+    // downstream node wires to them; this case only matters for the *terminal, no-reading-edge*
+    // fallback (`finishBindings`, which always calls this with the default sourceHandle
+    // "output") — every other node kind's single output port happens to be named "output", so
+    // this fallback needs a kind-specific override here, same as router/loop/map above.
+    case "search":
+      return sourceHandle === "output" ? `${varRef}${dot}results` : `${varRef}${dot}${sourceHandle}`;
+    case "fetch":
+      return sourceHandle === "output" ? `${varRef}${dot}content` : `${varRef}${dot}${sourceHandle}`;
     default:
       return `${varRef}${dot}${sourceHandle}`;
   }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
 import { loopRouterBodyGraph, loopRouterBodyResponses } from "./golden/loop-router-body.js";
 import { mapFanoutGraph, mapFanoutResponses } from "./golden/map-fanout.js";
@@ -7,9 +7,14 @@ import { nestedMapInLoopGraph, nestedMapInLoopResponses } from "./golden/nested-
 import { routerDeepBranchGraph, routerDeepBranchResponses } from "./golden/router-deep-branch.js";
 import { routerMergeGraph, routerMergeResponses } from "./golden/router-merge.js";
 import { routerNestedGraph, routerNestedResponses } from "./golden/router-nested.js";
+import { searchNodeEnv, searchNodeGraph, searchNodeNetTable, searchNodeResponses } from "./golden/search-node.js";
 import { stateToolsGraph, stateToolsResponses } from "./golden/state-tools.js";
 import { twoNodeChainGraph, twoNodeChainResponses } from "./golden/two-node-chain.js";
 import { traceViaCompiledScript, traceViaInterpreter } from "./parity.js";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("interpreter/compiler parity", () => {
   it(
@@ -139,6 +144,18 @@ describe("interpreter/compiler parity", () => {
       expect(viaCompiled).toEqual(viaInterpreter);
       expect(viaInterpreter.map((e) => e.nodeId).sort()).toEqual(["l", "leaf@l:0/m:0", "leaf@l:0/m:1", "m@l:0"].sort());
       expect(viaInterpreter.find((e) => e.nodeId === "l")?.output).toBe('["LX","LY"]');
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a search node backed by a stubbed net.fetch",
+    async () => {
+      vi.stubEnv("SEARXNG_BASE_URL", searchNodeEnv.SEARXNG_BASE_URL);
+      const viaInterpreter = await traceViaInterpreter(searchNodeGraph, searchNodeResponses, searchNodeNetTable);
+      const viaCompiled = traceViaCompiledScript(searchNodeGraph, searchNodeResponses, searchNodeNetTable, searchNodeEnv);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter.find((e) => e.nodeId === "final")?.output).toBe("DONE");
     },
     15_000,
   );

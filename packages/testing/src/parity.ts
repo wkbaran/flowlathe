@@ -16,6 +16,7 @@ import {
   InMemoryBlobStore,
   stateToolset,
 } from "@flowlathe/runtime";
+import { injectNetStubTable, netStubFetch } from "./net-stub.js";
 
 export interface TraceEntry {
   nodeId: string;
@@ -38,6 +39,7 @@ function traceFromEvents(events: RunEvent[]): TraceEntry[] {
 export async function traceViaInterpreter(
   graph: FlowGraph,
   responses: Map<string, string>,
+  netTable: Map<string, string> = new Map(),
 ): Promise<TraceEntry[]> {
   const events: RunEvent[] = [];
   const scheduler = new SimpleScheduler({
@@ -57,6 +59,7 @@ export async function traceViaInterpreter(
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      net: { fetch: netStubFetch(netTable) },
       ...createSuspendRegistry(),
     },
   });
@@ -69,14 +72,19 @@ const packageDir = join(srcDir, "..");
 const tsxBin = join(packageDir, "node_modules", ".bin", "tsx");
 const scratchRoot = join(packageDir, ".parity-tmp");
 
-export function traceViaCompiledScript(graph: FlowGraph, responses: Map<string, string>): TraceEntry[] {
+export function traceViaCompiledScript(
+  graph: FlowGraph,
+  responses: Map<string, string>,
+  netTable: Map<string, string> = new Map(),
+  env: Record<string, string> = {},
+): TraceEntry[] {
   const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
   mkdirSync(scratchRoot, { recursive: true });
   const dir = mkdtempSync(join(scratchRoot, "run-"));
   const file = join(dir, "flow.ts");
-  writeFileSync(file, injectResponseTable(script, responses));
+  writeFileSync(file, injectNetStubTable(injectResponseTable(script, responses), netTable));
 
-  const result = spawnSync(tsxBin, [file], { encoding: "utf-8", cwd: packageDir });
+  const result = spawnSync(tsxBin, [file], { encoding: "utf-8", cwd: packageDir, env: { ...process.env, ...env } });
   if (result.status !== 0) {
     throw new Error(`compiled script failed (exit ${String(result.status)}):\n${result.stderr}`);
   }

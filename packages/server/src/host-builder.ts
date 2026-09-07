@@ -127,6 +127,7 @@ export function buildHostAndRun(opts: {
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry([...stateToolset(state), ...(pluginToolsets ?? [])]),
+      net: { fetch: globalThis.fetch },
       ...suspendRegistry,
       emit: hostEmit,
     },

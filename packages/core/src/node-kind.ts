@@ -7,6 +7,8 @@ export const NODE_KINDS = [
   "pause",
   "userInput",
   "gate",
+  "search",
+  "fetch",
 ] as const;
 
 export type NodeKind = (typeof NODE_KINDS)[number];

@@ -23,6 +23,7 @@ function testHost(): { host: RuntimeHost; events: RunEvent[] } {
     llmConfig: createLlmConfigStore(),
     context: createContextStore(),
     tools: createToolRegistry(stateToolset(state)),
+    net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
     ...createSuspendRegistry(),
   };
   return { host, events };

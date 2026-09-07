@@ -8,6 +8,7 @@ import {
   UserInputNodeView,
 } from "./ControlFlowNodeViews.js";
 import { PromptNodeView } from "./PromptNodeView.js";
+import { FetchNodeView, SearchNodeView } from "./SearchFetchNodeViews.js";
 
 export const nodeTypes = {
   prompt: PromptNodeView,
@@ -18,4 +19,6 @@ export const nodeTypes = {
   loop: LoopNodeView,
   map: MapNodeView,
   gate: GateNodeView,
+  search: SearchNodeView,
+  fetch: FetchNodeView,
 };

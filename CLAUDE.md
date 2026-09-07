@@ -572,3 +572,46 @@ rediscover them the hard way.
   - **Firecrawl's crawl-completion polling interval is a constructor option
     (`crawlPollIntervalMs`, default 1000ms), not hardcoded**, specifically so tests can set it to
     1ms and exercise multi-poll and timeout paths without a real 1-second-per-iteration wait.
+- **PLAN-INTEGRATIONS.md Phase C added the `search`/`fetch` node kinds
+  (`@flowlathe/node-search`/`@flowlathe/node-fetch`) — a design question the plan left open was
+  resolved here and is worth recording:**
+  - **`search`/`fetch` reconstruct their plugin client from `process.env` directly inside
+    `runSearch`/`runFetch`** (`SEARXNG_BASE_URL`/`FIRECRAWL_API_KEY` etc., via a `fetchImpl:
+    ctx.net.fetch`-configured `SearxngClient`/`FirecrawlClient` — the exact same client class the
+    `searxng_search`/`firecrawl_*` tools use, per §5.4's "different front end to the same client,
+    not a fork of it"), rather than threading plugin config through a new `RuntimeHost` field or
+    going through `ctx.tools.invoke(...)`. This works because this node package is imported by
+    *both* the interpreter and the compiled script (via `@flowlathe/runtime`'s `createRun`, the
+    existing "one implementation, two callers" pattern) — both run as Node processes with the
+    relevant env var already set, exactly like the `standalone` exported-script path added in
+    Phase B. The alternative (routing through `ctx.tools.invoke`) would have reused the tool's
+    own URL-safety/truncation/sanitization for free, but would have made `RuntimeHost.net`
+    pointless (the plan explicitly asks for it, precisely so the parity harness can stub outbound
+    HTTP the same way it stubs the mock provider) — reading env directly is what actually
+    exercises `ctx.net.fetch`.
+  - **`accessorExpr` (`compile-graph.ts`) needed two new cases for `search`/`fetch`**, not
+    mentioned explicitly in the plan's checklist: every existing node kind's single output port
+    happens to be literally named `"output"`, which is what `finishBindings`'s terminal-node
+    fallback (no reading edge) defaults to — `search`'s port is `"results"` and `fetch`'s is
+    `"content"`, so a search/fetch node used as a flow's terminal output needed the same kind of
+    override router/loop/map already have. A node *read by* a downstream edge is unaffected
+    (the edge's own `sourceHandle` already carries the right name).
+  - **`summarizeSearxngResults` was promoted from a private helper in `plugin-searxng`'s
+    `tools.ts` to an exported one**, specifically so `@flowlathe/node-search`'s `runSearch` uses
+    the identical trimming/sanitization the `searxng_search` tool uses — avoiding a second,
+    silently-diverging implementation of "what a search result looks like once it reaches
+    context."
+  - **Only a `search`-node golden parity fixture was added** (`packages/testing/src/golden/
+    search-node.ts`, plus `net-stub.ts`'s `netStubFetch`/`injectNetStubTable`, mirroring the mock
+    provider's `injectResponseTable` pattern). A `fetch`-node fixture was deliberately deferred:
+    Firecrawl's REST shape is POST-based against a handful of fixed paths (`/v2/scrape`,
+    `/v2/map`, `/v2/crawl`) reused across different calls (e.g. `isAuthorized`'s probe and a real
+    `firecrawl_map` call both hit `/v2/map`), so a URL-only stub table (sufficient for SearXNG's
+    GET-with-query-string shape) would collide. Doing this properly needs the fuller `(nodeId,
+    sha256(renderedUrlOrQuery))`-keyed design PLAN.md's design trap 8 actually describes — left
+    as a real, tracked gap rather than a hidden one.
+  - **No Playwright e2e spec was added for this phase either**, for the same reason recorded
+    above for SearXNG/Firecrawl's tool-shaped e2e coverage: this codebase currently has no
+    plugin-shaped e2e spec at all to extend, and building the first one (a fixture SearXNG/
+    Firecrawl HTTP server wired into `playwright/playwright.config.ts`) is a separable piece of
+    work from getting the node kinds themselves correct and unit/parity-tested.

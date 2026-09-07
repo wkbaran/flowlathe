@@ -1,5 +1,5 @@
 import type { FlowEdge, FlowNode, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
-import { validateGraph } from "@flowlathe/core";
+import { checkUrlSafety, extractTemplateVars, validateGraph } from "@flowlathe/core";
 import {
   Alert,
   AppBar,
@@ -95,6 +95,8 @@ const NODE_KIND_OPTIONS: NodeKind[] = [
   "loop",
   "map",
   "gate",
+  "search",
+  "fetch",
 ];
 
 /** Mirrors @flowlathe/core's `requiredToolsets(graph)` over live xyflow nodes (rather than a
@@ -104,10 +106,12 @@ const NODE_KIND_OPTIONS: NodeKind[] = [
 function requiredToolsetsFrom(ns: Node[]): string[] {
   const set = new Set<string>();
   for (const n of ns) {
-    const enabled = (n.data as Record<string, unknown>)["enabledToolsets"];
+    const data = n.data as Record<string, unknown>;
+    const enabled = data["enabledToolsets"];
     if (Array.isArray(enabled)) {
       for (const t of enabled) if (typeof t === "string") set.add(t);
     }
+    if (typeof data["toolset"] === "string") set.add(data["toolset"]);
   }
   return [...set].sort();
 }
@@ -133,6 +137,15 @@ function displayName(toolset: string, statuses: Record<string, PluginStatusEntry
   return statuses[toolset]?.displayName ?? (toolset.charAt(0).toUpperCase() + toolset.slice(1));
 }
 
+/** Edit-time half of the `fetch` node's "goes through URL safety twice over"
+ *  (PLAN-INTEGRATIONS.md §5.3) — only checkable for a *literal* URL (no `{{vars}}`); a templated
+ *  one can only be validated once rendered, which the runtime does on every activation. */
+function fetchUrlSafetyError(urlTemplate: string | undefined): string | undefined {
+  if (!urlTemplate || extractTemplateVars(urlTemplate).length > 0) return undefined;
+  const verdict = checkUrlSafety(urlTemplate);
+  return verdict.ok ? undefined : verdict.reason;
+}
+
 function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
   switch (type) {
     case "prompt":
@@ -151,6 +164,10 @@ function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
       return { label: id, itemsTemplate: '["a","b","c"]', itemPortName: "item", maxConcurrency: 3, maxItems: 10 };
     case "gate":
       return { label: id };
+    case "search":
+      return { label: id, queryTemplate: "{{input}}", toolset: "searxng" };
+    case "fetch":
+      return { label: id, urlTemplate: "{{input}}", toolset: "firecrawl", format: "markdown" };
   }
 }
 
@@ -1044,6 +1061,67 @@ function NodeProperties(props: {
               )}
             </>
           )}
+        </>
+      )}
+
+      {type === "search" && (
+        <>
+          <TextField
+            size="small"
+            label="Query template"
+            value={(data["queryTemplate"] as string) ?? ""}
+            onChange={(e) => onChange({ queryTemplate: e.target.value })}
+            slotProps={{ htmlInput: { "aria-label": "Query template" } }}
+          />
+          <TextField
+            size="small"
+            label="Categories (comma-separated)"
+            value={(data["categories"] as string) ?? ""}
+            onChange={(e) => onChange({ categories: e.target.value || undefined })}
+          />
+          <TextField
+            size="small"
+            label="Engines (comma-separated)"
+            value={(data["engines"] as string) ?? ""}
+            onChange={(e) => onChange({ engines: e.target.value || undefined })}
+          />
+          <TextField
+            size="small"
+            type="number"
+            label="Limit (max 20)"
+            value={(data["limit"] as number | undefined) ?? ""}
+            onChange={(e) => onChange({ limit: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
+        </>
+      )}
+
+      {type === "fetch" && (
+        <>
+          <TextField
+            size="small"
+            label="URL template"
+            value={(data["urlTemplate"] as string) ?? ""}
+            onChange={(e) => onChange({ urlTemplate: e.target.value })}
+            slotProps={{ htmlInput: { "aria-label": "URL template" } }}
+            error={Boolean(fetchUrlSafetyError(data["urlTemplate"] as string | undefined))}
+            helperText={fetchUrlSafetyError(data["urlTemplate"] as string | undefined)}
+          />
+          <Select
+            size="small"
+            value={(data["format"] as string) ?? "markdown"}
+            onChange={(e) => onChange({ format: e.target.value })}
+            inputProps={{ "aria-label": "Format" }}
+          >
+            <MenuItem value="markdown">markdown</MenuItem>
+            <MenuItem value="html">html</MenuItem>
+          </Select>
+          <TextField
+            size="small"
+            type="number"
+            label="Max characters"
+            value={(data["maxChars"] as number | undefined) ?? ""}
+            onChange={(e) => onChange({ maxChars: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
         </>
       )}
 

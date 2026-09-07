@@ -8,6 +8,7 @@ import {
   type StateStore,
   type ToolRegistry,
 } from "@flowlathe/core";
+import { type FetchResult, type FetchSpec, runFetch } from "@flowlathe/node-fetch";
 import { type GateResult, type GateSpec, runGate } from "@flowlathe/node-gate";
 import { type LoopSpec } from "@flowlathe/node-loop";
 import { type MapSpec } from "@flowlathe/node-map";
@@ -15,6 +16,7 @@ import { type MergeResult, type MergeSpec, runMerge } from "@flowlathe/node-merg
 import { type PauseResult, type PauseSpec, runPause } from "@flowlathe/node-pause";
 import { type PromptSpec, runPrompt } from "@flowlathe/node-prompt";
 import { type RouterResult, type RouterSpec, runRouter } from "@flowlathe/node-router";
+import { type SearchResult, type SearchSpec, runSearch } from "@flowlathe/node-search";
 import { type UserInputResult, type UserInputSpec, runUserInput } from "@flowlathe/node-user-input";
 import { loopUntil, mapConcurrent } from "./combinators.js";
 
@@ -30,6 +32,8 @@ export interface Run {
   pause(spec: PauseSpec, inputs: Record<string, string>): Promise<PauseResult>;
   userInput(spec: UserInputSpec): Promise<UserInputResult>;
   gate(spec: GateSpec, inputs: Record<string, string>): Promise<GateResult>;
+  search(spec: SearchSpec, inputs: Record<string, string>): Promise<SearchResult>;
+  fetch(spec: FetchSpec, inputs: Record<string, string>): Promise<FetchResult>;
   loop(
     spec: LoopSpec,
     inputs: Record<string, string>,
@@ -58,6 +62,8 @@ export function createRun(opts: CreateRunOptions): Run {
     pause: (spec, inputs) => runPause(host, spec, inputs),
     userInput: (spec) => runUserInput(host, spec),
     gate: (spec, inputs) => runGate(host, spec, inputs),
+    search: (spec, inputs) => runSearch(host, spec, inputs),
+    fetch: (spec, inputs) => runFetch(host, spec, inputs),
 
     loop: async (spec, inputs, body) => {
       const init = renderTemplate(spec.initTemplate, inputs);

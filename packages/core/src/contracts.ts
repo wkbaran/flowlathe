@@ -165,6 +165,11 @@ export interface RuntimeHost {
   llmConfig: LlmConfigStore;
   context: ContextStore;
   tools: ToolRegistry;
+  /** Outbound HTTP for node kinds that fetch (search/fetch) — injected, never a bare global
+   *  `fetch`, so the parity harness, unit tests, and e2e run fully offline against a stub. The
+   *  production value is just Node's global `fetch`; this stays a plain type here so `core`
+   *  remains isomorphic (no `node:*` import, and the browser has a global `fetch` too). */
+  net: { fetch: typeof globalThis.fetch };
 }
 
 export interface PromptResult {

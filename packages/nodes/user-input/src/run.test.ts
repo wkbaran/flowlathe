@@ -21,6 +21,7 @@ describe("runUserInput", () => {
       llmConfig: { get: () => ({}), set: () => undefined },
       context: { get: () => [], append: () => undefined, replace: () => undefined },
       tools: { specsFor: () => [], invoke: async () => "", missingToolsets: () => [] },
+      net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
     };
 
     const promise = runUserInput(ctx, { id: "u", prompt: "What's your name?" });

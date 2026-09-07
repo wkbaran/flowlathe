@@ -32,6 +32,7 @@ function makeRun(): ReturnType<typeof createRun> {
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
       ...createSuspendRegistry(),
     },
   });

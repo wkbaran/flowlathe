@@ -21,6 +21,7 @@ function fakeCtx(): { ctx: RuntimeHost; events: RunEvent[] } {
     },
     context: { get: () => [], append: () => undefined, replace: () => undefined },
     tools: { specsFor: () => [], invoke: async () => "", missingToolsets: () => [] },
+    net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
   };
   return { ctx, events };
 }

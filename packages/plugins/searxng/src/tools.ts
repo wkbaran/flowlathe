@@ -26,17 +26,19 @@ export const SEARXNG_SEARCH_TOOL: ToolSpec = {
   },
 };
 
-interface SearchResultSummary {
+export interface SearchResultSummary {
   title: string;
   url: string;
   snippet: string;
   engine: string;
 }
 
-/** A tool result is prompt context, so trim SearXNG's raw response down to what a model needs —
- *  and sanitize each snippet/title, since search results are attacker-influenceable text landing
- *  directly in a model's context (same threat class as an MCP tool description). */
-function summarize(results: SearxngResult[]): SearchResultSummary[] {
+/** A tool result (or a `search` node's output — see @flowlathe/node-search, which calls this
+ *  same function so the two front ends stay identical) is prompt context, so trim SearXNG's raw
+ *  response down to what a model needs — and sanitize each snippet/title, since search results
+ *  are attacker-influenceable text landing directly in a model's context (same threat class as
+ *  an MCP tool description). Exported rather than kept private for exactly that reuse. */
+export function summarizeSearxngResults(results: SearxngResult[]): SearchResultSummary[] {
   return results.map((r) => ({
     title: sanitizeUntrustedText(r.title, 500, "searxng result"),
     url: r.url,
@@ -68,7 +70,7 @@ function searxngSearchTool(client: SearxngClient): ToolRegistration["handler"] {
         meta.signal,
       ),
     );
-    return result.ok ? toolOk(summarize(result.data)) : toolFail(result.error);
+    return result.ok ? toolOk(summarizeSearxngResults(result.data)) : toolFail(result.error);
   };
 }
 
