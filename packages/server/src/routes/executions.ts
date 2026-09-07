@@ -3,7 +3,6 @@ import type { Scheduler, ToolRegistration } from "@flowlathe/core";
 import {
   type Db,
   getExecution,
-  getLatestGraphForFlowVersion,
   getStateSnapshot,
   listBranches,
   listResponses,
@@ -14,6 +13,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ExecutionHub } from "../execution-hub.js";
+import { getLatestGraphForFlowVersionFileAware } from "../flow-store.js";
 import { stepBack, stepOnce } from "../stepper.js";
 
 const ResumeBody = z.object({ activationKey: z.string().min(1), value: z.string() });
@@ -25,10 +25,11 @@ export interface ExecutionRouteDeps {
   hub: ExecutionHub;
   scheduler: Scheduler;
   pluginToolsets?: ToolRegistration[] | undefined;
+  flowsDir: string;
 }
 
 export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRouteDeps): void {
-  const { db, hub, scheduler, pluginToolsets } = deps;
+  const { db, hub, scheduler, pluginToolsets, flowsDir } = deps;
 
   app.get<{ Params: { id: string }; Querystring: { branchId?: string } }>(
     "/api/executions/:id",
@@ -74,7 +75,7 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
     const execution = getExecution(db, request.params.id);
     if (!execution) return reply.code(404).send({ error: "execution not found" });
-    const graph = getLatestGraphForFlowVersion(db, execution.flowVersionId);
+    const graph = getLatestGraphForFlowVersionFileAware(db, flowsDir, execution.flowVersionId);
     if (!graph) return reply.code(500).send({ error: "flow version graph not found" });
 
     try {

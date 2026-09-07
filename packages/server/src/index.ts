@@ -11,6 +11,8 @@ import { listTriggers } from "@flowlathe/persistence";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
 import { ExecutionHub } from "./execution-hub.js";
+import { autoExportIfEmpty, flowsDir as resolveFlowsDir, syncAllFlowFiles, syncFlowFile, watchFlowsDir } from "./flow-store.js";
+import { FlowsHub } from "./flows-hub.js";
 import { discoverMcpToolsets, loadMcpServersConfig } from "./mcp-config.js";
 import { SchedulerRegistry } from "./scheduler-registry.js";
 import { TriggerRegistry } from "./triggers/registry.js";
@@ -21,12 +23,24 @@ const port = Number(process.env["PORT"] ?? 4310);
 const dbPath = process.env["FLOWLATHE_DB_PATH"] ?? join(here, "..", "data", "flowlathe.sqlite");
 const dataDir = process.env["FLOWLATHE_DATA_DIR"] ?? dirname(dbPath);
 const staticRoot = process.env["FLOWLATHE_STATIC_ROOT"] ?? join(here, "..", "..", "web", "dist");
+const flowsDir = resolveFlowsDir();
 
 mkdirSync(dirname(dbPath), { recursive: true });
 
 const opened = openDb(dbPath);
 runMigrations(opened);
 ensureDefaultMockProvider(opened.db);
+
+/** PLAN-FLOW-DSL.md §4.4: a fresh `FLOWLATHE_FLOWS_DIR` with an already-populated DB (the
+ *  pre-S3-to-S3 upgrade path) gets every flow exported to it once, automatically. Either way,
+ *  every `.flow` file already there is synced into the DB next, so a file edited while the
+ *  server was down is picked up on the next boot rather than silently ignored until the watcher
+ *  happens to see a change. */
+autoExportIfEmpty(opened.db, flowsDir);
+for (const outcome of syncAllFlowFiles(opened.db, flowsDir)) {
+  if (outcome.error) console.error(`[flow-store] ${outcome.slug}: ${outcome.error}`);
+}
+const flowsHub = new FlowsHub();
 
 const credentialKey = resolveCredentialKey(dataDir);
 const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
@@ -92,6 +106,8 @@ const app = buildApp({
   mcpStatuses,
   hub,
   triggerRegistry,
+  flowsDir,
+  flowsHub,
 });
 
 app.listen({ port, host: "127.0.0.1" }, (err, address) => {
@@ -100,6 +116,15 @@ app.listen({ port, host: "127.0.0.1" }, (err, address) => {
     process.exit(1);
   }
   console.log(`flowlathe server listening on ${address}`);
+});
+
+/** Live from here on: an external edit (a text editor, `git checkout`, `flowlathe fmt`) is
+ *  synced into the DB and rebroadcast on `/api/flows/events` — see flow-store.ts's own doc
+ *  comment for the fs.watch-on-WSL2 caveat this isn't able to verify inside this sandbox. */
+const stopWatchingFlows = watchFlowsDir(flowsDir, (slug) => {
+  const outcome = syncFlowFile(opened.db, flowsDir, slug);
+  if (outcome.error) console.error(`[flow-store] ${slug}: ${outcome.error}`);
+  flowsHub.publish({ slug });
 });
 
 /** Trigger startup happens *after* the app is listening — a slow or failing Discord gateway
@@ -115,6 +140,7 @@ for (const trigger of listTriggers(opened.db).filter((t) => t.enabled)) {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    stopWatchingFlows();
     triggerRegistry
       .stopAll()
       .catch(() => undefined)

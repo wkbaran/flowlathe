@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { uniqueSlug } from "@flowlathe/core";
 import { print, parse, type FlowFile } from "@flowlathe/dsl";
 import { createFlow, getFlow, listFlows, openDb, runMigrations, saveFlowVersion } from "@flowlathe/persistence";
 import { parseArgs } from "../args.js";
 import { flowsDir } from "../discover.js";
-import { uniqueSlug } from "../slug.js";
 
 /** PLAN-FLOW-DSL.md §4.4: a one-shot, non-destructive migration between the pre-S3 DB-backed
  *  `flow_versions` table and `.flow` files on disk. Existing rows are never touched — `export`

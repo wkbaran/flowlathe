@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { FlowGraph } from "@flowlathe/core";
 import { ensureDefaultMockProvider, openDb, runMigrations, type OpenedDb } from "@flowlathe/persistence";
 import { DiscordClient } from "@flowlathe/plugin-discord";
@@ -19,16 +22,19 @@ class FakeGateway implements DiscordGateway {
 
 let opened: OpenedDb;
 let credentialKey: Buffer;
+let flowsDir: string;
 
 beforeEach(() => {
   opened = openDb(":memory:");
   runMigrations(opened);
   ensureDefaultMockProvider(opened.db);
   credentialKey = randomBytes(32);
+  flowsDir = mkdtempSync(join(tmpdir(), "flowlathe-server-flows-"));
 });
 
 afterEach(() => {
   opened.close();
+  rmSync(flowsDir, { recursive: true, force: true });
 });
 
 function buildTestApp() {
@@ -46,7 +52,7 @@ function buildTestApp() {
     discordBotToken: "test-token",
     gatewayFactory: () => new FakeGateway(),
   });
-  const app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, hub, triggerRegistry });
+  const app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, hub, triggerRegistry, flowsDir });
   return { app, triggerRegistry };
 }
 

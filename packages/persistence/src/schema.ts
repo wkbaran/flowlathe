@@ -28,9 +28,21 @@ export const flowVersions = sqliteTable(
       .references(() => flows.id),
     version: integer("version").notNull(),
     graphJson: text("graph_json", { mode: "json" }).$type<FlowGraph>().notNull(),
+    /** The canonical (`@flowlathe/dsl` `format`-ed) `.flow` text this version was snapshotted
+     *  from — null for a version saved before PLAN-FLOW-DSL.md S3, or one saved through a path
+     *  that never had DSL text (there is none once flows are always file-backed). What makes an
+     *  old execution's flow viewable *as text* even after the file changed on disk or was
+     *  deleted — see PLAN-FLOW-DSL.md §4.2. */
+    sourceText: text("source_text"),
+    /** sha256 of `sourceText`, in the same hex form `node:crypto`'s `createHash("sha256")`
+     *  produces. Null exactly when `sourceText` is null. Two SQLite NULLs never collide under a
+     *  UNIQUE constraint, so old rows (both null) can coexist freely; only real, equal hashes
+     *  ever collide — which is the whole point: saving an unchanged flow file creates no new
+     *  row. */
+    contentHash: text("content_hash"),
     createdAt: text("created_at").notNull().default(nowIso()),
   },
-  (t) => [unique().on(t.flowId, t.version)],
+  (t) => [unique().on(t.flowId, t.version), unique().on(t.flowId, t.contentHash)],
 );
 
 export const providers = sqliteTable("providers", {

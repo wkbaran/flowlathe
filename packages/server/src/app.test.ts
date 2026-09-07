@@ -1,6 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type OpenedDb,
+  contentHashOf,
   ensureDefaultMockProvider,
   listRunEventsSince,
   openDb,
@@ -12,19 +16,22 @@ import { SchedulerRegistry } from "./scheduler-registry.js";
 
 let opened: OpenedDb;
 let app: ReturnType<typeof buildApp>;
+let flowsDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   opened = openDb(":memory:");
   runMigrations(opened);
   ensureDefaultMockProvider(opened.db);
   const credentialKey = randomBytes(32);
   const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
-  app = buildApp({ db: opened.db, credentialKey, schedulerRegistry });
+  flowsDir = await mkdtemp(join(tmpdir(), "flowlathe-server-flows-"));
+  app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, flowsDir });
 });
 
 afterEach(async () => {
   await app.close();
   opened.close();
+  await rm(flowsDir, { recursive: true, force: true });
 });
 
 describe("flow API", () => {
@@ -69,6 +76,49 @@ describe("flow API", () => {
       payload: { graph: { nodes: [{ id: "a" }], edges: [] } },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("writes a canonical .flow file to disk on create and on save", async () => {
+    const created = (
+      await app.inject({ method: "POST", url: "/api/flows", payload: { name: "My Flow" } })
+    ).json();
+    expect(await readFile(join(flowsDir, `${created.id}.flow`), "utf8")).toContain('flow "My Flow"');
+
+    const graph = { nodes: [{ id: "a", type: "prompt", position: { x: 1, y: 2 }, data: { template: "hi", providerId: "mock", modelId: "m" } }], edges: [] };
+    await app.inject({ method: "PUT", url: `/api/flows/${created.id}`, payload: { graph } });
+    expect(await readFile(join(flowsDir, `${created.id}.flow`), "utf8")).toContain("node a: prompt");
+  });
+
+  it("PUT with a stale ifMatch is rejected with 409 and the on-disk text", async () => {
+    const created = (
+      await app.inject({ method: "POST", url: "/api/flows", payload: { name: "My Flow" } })
+    ).json();
+    // An external edit — bypassing the API entirely, like an editor or `git checkout` would.
+    await writeFile(join(flowsDir, `${created.id}.flow`), 'flow "My Flow (edited externally)" {\n}\n');
+
+    const graph = { nodes: [], edges: [] };
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/flows/${created.id}`,
+      payload: { graph, ifMatch: "stale-hash-the-canvas-loaded" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().currentText).toContain("edited externally");
+  });
+
+  it("PUT with the matching ifMatch succeeds", async () => {
+    const created = (
+      await app.inject({ method: "POST", url: "/api/flows", payload: { name: "My Flow" } })
+    ).json();
+    const currentHash = contentHashOf(await readFile(join(flowsDir, `${created.id}.flow`), "utf8"));
+
+    const graph = { nodes: [], edges: [] };
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/flows/${created.id}`,
+      payload: { graph, ifMatch: currentHash },
+    });
+    expect(res.statusCode).toBe(200);
   });
 });
 
@@ -393,5 +443,47 @@ describe("step debugging", () => {
       await app.inject({ method: "GET", url: `/api/executions/${executionId}?branchId=${forked.branchId}` })
     ).json();
     expect(forkedLog.responses.map((r: { nodeId: string }) => r.nodeId)).toEqual(["b"]);
+  });
+
+  it("resolves node b's step from the CURRENT .flow file, not the version pinned at step-start (PLAN-FLOW-DSL.md S3)", async () => {
+    const flowId = await createTwoNodeFlow();
+    const { executionId, branchId } = (
+      await app.inject({ method: "POST", url: `/api/flows/${flowId}/step-start` })
+    ).json();
+
+    // Step node "a" before touching the file at all — this pins flowVersionId to the version
+    // active when stepping began, exactly like CLAUDE.md's step-mode note describes.
+    await app.inject({ method: "POST", url: `/api/executions/${executionId}/step`, payload: { branchId } });
+
+    // Now edit the flow FILE directly, bypassing the API entirely — the same thing an editor,
+    // `flowlathe fmt`, or a `git checkout` would do. Only node "b"'s template changes.
+    const editedText = `flow "Chain" {
+  node a: prompt @(0, 0) {
+    template = "start"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node b: prompt @(1, 0) {
+    template = "EDITED: {{input}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  a.output -> b.input
+}
+`;
+    await writeFile(join(flowsDir, `${flowId}.flow`), editedText);
+
+    const step2 = (
+      await app.inject({ method: "POST", url: `/api/executions/${executionId}/step`, payload: { branchId } })
+    ).json();
+    expect(step2).toMatchObject({ done: false, nodeId: "b" });
+
+    const events = listRunEventsSince(opened.db, executionId, 0).map(
+      (row) => row.payload as { kind: string; nodeId?: string; renderedPrompt?: string },
+    );
+    const bFinished = events.find((e) => e.kind === "node_finished" && e.nodeId === "b");
+    expect(bFinished?.renderedPrompt).toContain("EDITED:");
   });
 });

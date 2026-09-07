@@ -16,7 +16,7 @@ describe("slugify", () => {
 });
 
 describe("uniqueSlug", () => {
-  it("suffixes on collision like the canvas's node-name convention", () => {
+  it("suffixes on collision", () => {
     const taken = new Set<string>();
     const a = uniqueSlug("extract", taken);
     taken.add(a);

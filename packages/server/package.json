@@ -16,6 +16,7 @@
   "dependencies": {
     "@flowlathe/compiler": "workspace:*",
     "@flowlathe/core": "workspace:*",
+    "@flowlathe/dsl": "workspace:*",
     "@flowlathe/interpreter": "workspace:*",
     "@flowlathe/persistence": "workspace:*",
     "@flowlathe/plugin-discord": "workspace:*",

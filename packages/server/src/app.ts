@@ -4,6 +4,8 @@ import type { Db } from "@flowlathe/persistence";
 import { SPOTIFY_MANIFEST, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ExecutionHub } from "./execution-hub.js";
+import { flowsDir as defaultFlowsDir } from "./flow-store.js";
+import { FlowsHub } from "./flows-hub.js";
 import { registerExecutionRoutes } from "./routes/executions.js";
 import { registerFlowRoutes } from "./routes/flows.js";
 import { registerProviderRoutes } from "./routes/providers.js";
@@ -39,23 +41,35 @@ export interface BuildAppOptions {
    *  triggers` is only registered when a registry is provided, since starting/stopping a trigger
    *  needs one. */
   triggerRegistry?: TriggerRegistry;
+  /** PLAN-FLOW-DSL.md S3: the directory `PUT /api/flows/:id` writes `.flow` files into and
+   *  `/api/executions/:id/step` reads the current graph from. Defaults to `flowsDir()`
+   *  (`FLOWLATHE_FLOWS_DIR`, or `./flows`) — tests pass a throwaway temp dir instead. */
+  flowsDir?: string;
+  /** Shared with the caller the same way `hub` is, so `index.ts`'s file watcher and this app's
+   *  `/api/flows/events` SSE route publish/subscribe to the same topic. Defaults to a fresh one. */
+  flowsHub?: FlowsHub;
 }
 
 export function buildApp(opts: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const hub = opts.hub ?? new ExecutionHub();
+  const flowsDir = opts.flowsDir ?? defaultFlowsDir();
+  const flowsHub = opts.flowsHub ?? new FlowsHub();
 
   registerFlowRoutes(app, {
     db: opts.db,
     hub,
     scheduler: opts.schedulerRegistry,
     pluginToolsets: opts.pluginToolsets,
+    flowsDir,
+    flowsHub,
   });
   registerExecutionRoutes(app, {
     db: opts.db,
     hub,
     scheduler: opts.schedulerRegistry,
     pluginToolsets: opts.pluginToolsets,
+    flowsDir,
   });
   registerProviderRoutes(app, {
     db: opts.db,
