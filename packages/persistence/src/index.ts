@@ -11,5 +11,6 @@ export * from "./models.js";
 export * from "./plugin-credentials.js";
 export * from "./state.js";
 export * from "./contexts.js";
+export * from "./triggers.js";
 export * from "./migrate.js";
 export * as schema from "./schema.js";

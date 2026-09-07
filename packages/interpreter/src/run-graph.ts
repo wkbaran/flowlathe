@@ -22,6 +22,12 @@ import { registry } from "./registry.js";
 export interface RunGraphOptions {
   graph: FlowGraph;
   run: Run;
+  /** Pre-resolves a node's output ports as if a dispatch had already produced them — how a
+   *  trigger source (e.g. Discord) seeds a `trigger` node's real event data into a run, instead
+   *  of letting it resolve to its canvas `testPayload` default. Applied once at construction,
+   *  before the first readiness pass, by writing value slots directly — the seeded node is never
+   *  actually dispatched. Node id -> port name -> value. */
+  seed?: Record<string, Record<string, string>> | undefined;
 }
 
 export interface RunGraphResult {
@@ -54,6 +60,9 @@ export interface EngineOptions {
   /** The per-iteration value injected into this region's entry ports (see `EngineOptions.ownerId`). */
   injected?: Injection | undefined;
   initialOutputs?: Map<string, Record<string, PortSlot>>;
+  /** See `RunGraphOptions.seed` — only ever meaningful for the top-level engine (a Loop/Map
+   *  body's sub-engine has no seed of its own). */
+  seed?: Record<string, Record<string, string>> | undefined;
 }
 
 /** Declared input port names for a node, independent of scope — used only for the top-level
@@ -115,6 +124,11 @@ export class GraphEngine {
     }
 
     this.outputs = opts.initialOutputs ?? new Map();
+    if (opts.seed) {
+      for (const [nodeId, ports] of Object.entries(opts.seed)) {
+        this.outputs.set(nodeId, Object.fromEntries(Object.entries(ports).map(([port, value]) => [port, valueSlot(value)])));
+      }
+    }
     this.rank = computeTopoRank(this.nodesById, this.edgesByTargetPort);
 
     // Validation and the plugin-toolset gate only run for the top-level engine, not once per
@@ -388,5 +402,5 @@ function computeTopoRank(
 }
 
 export async function runGraph(opts: RunGraphOptions): Promise<RunGraphResult> {
-  return new GraphEngine(opts.graph, opts.run).runToCompletion();
+  return new GraphEngine(opts.graph, opts.run, opts.seed ? { seed: opts.seed } : {}).runToCompletion();
 }

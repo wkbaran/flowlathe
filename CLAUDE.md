@@ -647,3 +647,75 @@ rediscover them the hard way.
     `REQUIRED_PLUGIN_TOOLSETS` path as Spotify/MCP). Nothing extra was needed in `compileGraph`
     for this; the Phase B `standalone`-partitioning logic already treats "no `standalone` field
     on any registration for this toolset" as the server-only case by default.
+- **PLAN-INTEGRATIONS.md Phase E added the `trigger` node kind, `GraphEngine`'s `seed` option,
+  and `TriggerRegistry`/`DiscordTriggerSource`/`/api/triggers`.** The largest phase; scope
+  decisions worth knowing before touching this again:
+  - **`RunGraphOptions.seed` writes directly into `GraphEngine`'s internal `outputs` map at
+    construction, before the first readiness pass** — a seeded node is therefore never dispatched
+    at all (it's already "settled" by the time `remaining()` is computed), not dispatched-then-
+    overridden. This is why `runTrigger` (the ordinary, unseeded dispatch path, used only for a
+    canvas-started run) never runs when a flow is started by a real trigger: the trigger node's
+    `dispatch` function in `registry.ts` is simply never called for that node id. Snapshot/restore
+    needs **no shape change** at all: `EngineSnapshot.outputs` already captures whatever's in the
+    map, seeded or not, and `GraphEngine.restore` already re-validates the top-level graph and
+    toolset gate on every restore (a pre-existing behavior, not new to this phase). For step mode,
+    `startStepExecution` bakes the seed into stepIndex 0's persisted snapshot directly (via the
+    same `serializeSnapshot`/`putBlob` path every other snapshot uses) rather than reusing
+    `GraphEngine`'s constructor-time seeding — there's no `Run` object available yet at that call
+    site (host-building is deferred to the first `stepOnce`), so building the snapshot payload by
+    hand was simpler than manufacturing a throwaway host just to seed one.
+  - **A trigger node's real base-URL-equivalent (which flow-graph node ids to seed) is resolved by
+    `TriggerRegistry`, not stored on the `triggers` DB row.** `admitMessage` re-resolves the
+    trigger's pinned graph (`getGraphForFlowVersion` — the exact version, deliberately NOT
+    `getLatestGraphForFlowVersion`, which step sessions use on purpose to reflect live edits; a
+    trigger must never do that) on every single message and seeds *every* node with `type ===
+    "trigger" && data.source === "discord"` identically. Registration validation guarantees at
+    least one exists; nothing stops an author wiring more than one, and all get the same message
+    — an unusual but harmless graph shape, left unhandled the same way the compiler's router-edge-
+    reuse edge case is (see the router-branch entry above).
+  - **The dedupe claim/check race is resolved with a deliberately asymmetric design**: a *live*
+    gateway message only ever gets the fast, non-claiming `executionTriggerExistsForExternalId`
+    check before `admitMessage` starts a real execution and then claims via
+    `claimExecutionTrigger`'s `UNIQUE(external_id)` insert. If the claim itself loses a race
+    (vanishingly rare — it would need the recovery scan and a live event for the *same* message to
+    both pass the pre-check in the same instant), the execution that already started is simply
+    left to run; it's logged, not rolled back. Getting this fully atomic would mean claiming
+    *before* starting the run, but the claim's `execution_id` is a real FK to `executions.id`,
+    so the execution has to exist first — closing this completely would need a two-phase
+    reservation (claim a bare row, then backfill `execution_id`), judged not worth the complexity
+    for a single-user local server.
+  - **The self-message loop guard compares against the bot's own user id specifically (learned
+    from the gateway's `ready` event), not "any message where `author.bot` is true"** — matching
+    the plan's explicit instruction to keep other bots as an opt-in case, not a blanket ignore.
+    Before `ready` fires (a brief window right after `login()`), `botUserId` is `undefined` and the
+    guard is a no-op — a message from the bot's own account in that narrow window would not be
+    filtered. Not observed in testing (the fake-gateway tests fire `ready` synchronously inside
+    `login()`), but worth knowing if a real connection's `ready` timing ever matters.
+  - **Privileged-intents detection is a message-text heuristic** (`/intent|disallowed/i` against
+    the error message), not a check against a stable discord.js error code — discord.js does not
+    expose one consistently across versions for this failure mode. False negatives (a real intents
+    problem whose error text doesn't match) just fall back to printing the bare error, same as
+    before this existed.
+  - **Recovery's "how far back to scan" uses the Snowflake id's embedded timestamp**
+    (`snowflakeTimestampMs`: the top 42 bits of a Discord message id, shifted, plus the Discord
+    epoch) rather than reading each message's `timestamp` field — avoids a second per-message
+    field access and matches how Discord's own API documents deriving creation time from an id.
+  - **`DiscordClient.readMessages`'s signature changed from `(channelId, limit?, before?)` to
+    `(channelId, { limit?, before?, after? })`** to add `after` (needed for the recovery scan's
+    forward-from-cursor read; the outbound `discord_read_messages` tool only ever used `before`).
+    Every existing call site (the tool, its tests) was updated in the same change — a breaking
+    signature change to a function with exactly one internal consumer at the time, not a
+    backwards-compatible overload, since there's no external caller to preserve compatibility for.
+  - **No web UI for creating/managing triggers** — `/api/triggers` (POST/GET/DELETE/repin) is
+    fully functional and covered by route-level tests, but there's no canvas affordance to call
+    it yet. A deliberate cut: the plan's own checklist for this phase is entirely about the
+    subsystem (node kind, seed, registry, gateway, tables, recovery), and a management UI is a
+    separable, later piece of work — same category of cut as Spotify's Connect button being the
+    only plugin with dedicated UI beyond the generic manifest-driven surfaces.
+  - **No e2e spec** (Playwright can't drive a real Discord gateway) — coverage instead comes from
+    `packages/server/src/triggers/registry.test.ts`, which drives `DiscordTriggerSource` through
+    an injected fake `DiscordGateway` end to end (admission, channel allowlist, self-message
+    guard, dedupe-on-redelivery, and the recovery scan's cursor/window/reverse-ordering logic),
+    plus `routes/triggers.test.ts` for the HTTP-layer registration gate. This matches
+    PLAN-INTEGRATIONS.md §8's own instruction for this phase exactly ("Drive DiscordTriggerSource
+    through an injected event emitter").

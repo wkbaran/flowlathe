@@ -17,6 +17,7 @@ import { type PauseResult, type PauseSpec, runPause } from "@flowlathe/node-paus
 import { type PromptSpec, runPrompt } from "@flowlathe/node-prompt";
 import { type RouterResult, type RouterSpec, runRouter } from "@flowlathe/node-router";
 import { type SearchResult, type SearchSpec, runSearch } from "@flowlathe/node-search";
+import { type TriggerResult, type TriggerSpec, runTrigger } from "@flowlathe/node-trigger";
 import { type UserInputResult, type UserInputSpec, runUserInput } from "@flowlathe/node-user-input";
 import { loopUntil, mapConcurrent } from "./combinators.js";
 
@@ -34,6 +35,7 @@ export interface Run {
   gate(spec: GateSpec, inputs: Record<string, string>): Promise<GateResult>;
   search(spec: SearchSpec, inputs: Record<string, string>): Promise<SearchResult>;
   fetch(spec: FetchSpec, inputs: Record<string, string>): Promise<FetchResult>;
+  trigger(spec: TriggerSpec): Promise<TriggerResult>;
   loop(
     spec: LoopSpec,
     inputs: Record<string, string>,
@@ -64,6 +66,7 @@ export function createRun(opts: CreateRunOptions): Run {
     gate: (spec, inputs) => runGate(host, spec, inputs),
     search: (spec, inputs) => runSearch(host, spec, inputs),
     fetch: (spec, inputs) => runFetch(host, spec, inputs),
+    trigger: (spec) => runTrigger(host, spec),
 
     loop: async (spec, inputs, body) => {
       const init = renderTemplate(spec.initTemplate, inputs);

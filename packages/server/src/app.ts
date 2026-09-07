@@ -9,7 +9,9 @@ import { registerFlowRoutes } from "./routes/flows.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerSpotifyPluginRoutes } from "./routes/plugins-spotify.js";
 import { registerPluginRoutes, type McpServerStatus } from "./routes/plugins.js";
+import { registerTriggerRoutes } from "./routes/triggers.js";
 import type { SchedulerRegistry } from "./scheduler-registry.js";
+import type { TriggerRegistry } from "./triggers/registry.js";
 
 export interface BuildAppOptions {
   db: Db;
@@ -28,11 +30,20 @@ export interface BuildAppOptions {
   pluginManifests?: PluginManifest[] | undefined;
   /** One entry per successfully-or-unsuccessfully-discovered MCP server, for `/api/plugins/status`. */
   mcpStatuses?: Record<string, McpServerStatus> | undefined;
+  /** Shared with the caller (`index.ts`) rather than built internally, so a `TriggerRegistry`
+   *  constructed before `buildApp` runs observes the same execution-completion events flow
+   *  routes publish. Defaults to a fresh `ExecutionHub` (existing tests that never need to share
+   *  one are unaffected). */
+  hub?: ExecutionHub;
+  /** Absent in every existing test and in a server with no trigger configured at all — `/api/
+   *  triggers` is only registered when a registry is provided, since starting/stopping a trigger
+   *  needs one. */
+  triggerRegistry?: TriggerRegistry;
 }
 
 export function buildApp(opts: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
-  const hub = new ExecutionHub();
+  const hub = opts.hub ?? new ExecutionHub();
 
   registerFlowRoutes(app, {
     db: opts.db,
@@ -61,6 +72,9 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     pluginToolsets: opts.pluginToolsets ?? [],
     ...(opts.mcpStatuses ? { mcpStatuses: opts.mcpStatuses } : {}),
   });
+  if (opts.triggerRegistry) {
+    registerTriggerRoutes(app, { db: opts.db, registry: opts.triggerRegistry, pluginToolsets: opts.pluginToolsets });
+  }
 
   if (opts.staticRoot) {
     const staticRoot = opts.staticRoot;

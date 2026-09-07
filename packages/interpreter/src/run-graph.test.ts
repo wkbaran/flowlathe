@@ -537,3 +537,36 @@ describe("runGraph — missing plugin dependency gate", () => {
     await expect(runGraph({ graph, run })).resolves.toBeDefined();
   });
 });
+
+describe("runGraph — seed (trigger nodes)", () => {
+  it("uses the seeded value instead of dispatching (testPayload never appears)", async () => {
+    const { run, events } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [
+        node("t", "trigger", { source: "discord", testPayload: "SHOULD_NOT_APPEAR" }),
+        node("b", "prompt", promptData("got: {{input}}")),
+      ],
+      edges: [{ id: "t-b", source: "t", target: "b", sourceHandle: "content", targetHandle: "input" }],
+      state: [],
+    };
+    const { outputs } = await runGraph({
+      graph,
+      run,
+      seed: { t: { content: "REAL_MESSAGE", authorId: "u1", channelId: "c1", messageId: "m1" } },
+    });
+    expect(outputs["b"]).toBe("[mock:m] got: REAL_MESSAGE");
+    // the trigger node itself never dispatches when seeded, so it emits no node_started/finished.
+    expect(events.some((e) => "nodeId" in e && e.nodeId === "t")).toBe(false);
+  });
+
+  it("falls back to testPayload when not seeded (canvas run)", async () => {
+    const { run } = makeRun();
+    const graph: FlowGraph = {
+      nodes: [node("t", "trigger", { source: "manual", testPayload: "FROM_THE_DESK" }), node("b", "prompt", promptData("got: {{input}}"))],
+      edges: [{ id: "t-b", source: "t", target: "b", sourceHandle: "content", targetHandle: "input" }],
+      state: [],
+    };
+    const { outputs } = await runGraph({ graph, run });
+    expect(outputs["b"]).toBe("[mock:m] got: FROM_THE_DESK");
+  });
+});

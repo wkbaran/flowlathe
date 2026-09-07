@@ -8,6 +8,7 @@ import { type PauseSpec, PauseNodeDataSchema } from "@flowlathe/node-pause";
 import { type PromptSpec, PromptNodeDataSchema } from "@flowlathe/node-prompt";
 import { type RouterSpec, RouterNodeDataSchema } from "@flowlathe/node-router";
 import { type SearchSpec, SearchNodeDataSchema } from "@flowlathe/node-search";
+import { type TriggerSpec, TriggerNodeDataSchema } from "@flowlathe/node-trigger";
 import { type UserInputSpec, UserInputNodeDataSchema } from "@flowlathe/node-user-input";
 import type { Run } from "@flowlathe/runtime";
 import type { z } from "zod";
@@ -93,5 +94,14 @@ export const registry: Record<NodeKind, NodeDescriptor> = {
     inputPorts: (spec) => extractTemplateVars((spec as FetchSpec).urlTemplate).map((name) => ({ name, required: true })),
     outputPorts: () => ["content"],
     dispatch: async (run, spec, inputs) => ({ content: (await run.fetch(spec as FetchSpec, inputs)).content }),
+  },
+  trigger: {
+    schema: TriggerNodeDataSchema,
+    inputPorts: () => [],
+    outputPorts: () => ["content", "authorId", "channelId", "messageId"],
+    dispatch: async (run, spec) => {
+      const result = await run.trigger(spec as TriggerSpec);
+      return { content: result.content, authorId: result.authorId, channelId: result.channelId, messageId: result.messageId };
+    },
   },
 };

@@ -9,6 +9,7 @@ export const NODE_KINDS = [
   "gate",
   "search",
   "fetch",
+  "trigger",
 ] as const;
 
 export type NodeKind = (typeof NODE_KINDS)[number];

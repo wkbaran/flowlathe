@@ -275,3 +275,56 @@ export const pluginCredentials = sqliteTable("plugin_credentials", {
   secretEnc: text("secret_enc").notNull(),
   updatedAt: text("updated_at").notNull().default(nowIso()),
 });
+
+/** A trigger runs a *pinned* flow version, never HEAD — editing a flow on the canvas must not
+ *  silently change what a live Discord bot does; re-pinning is an explicit action. */
+export const triggers = sqliteTable("triggers", {
+  id: text("id").primaryKey(),
+  flowId: text("flow_id")
+    .notNull()
+    .references(() => flows.id),
+  flowVersionId: text("flow_version_id")
+    .notNull()
+    .references(() => flowVersions.id),
+  source: text("source").notNull().$type<"discord">(),
+  configJson: text("config_json", { mode: "json" }).notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull().default(nowIso()),
+});
+
+/** Provenance ("why did this run?") plus the dedupe mechanism: the `externalId` unique
+ *  constraint IS the claim a redelivered Discord message id can't pass twice, surviving a
+ *  server restart (unlike an in-memory set). */
+export const executionTriggers = sqliteTable(
+  "execution_triggers",
+  {
+    executionId: text("execution_id")
+      .primaryKey()
+      .references(() => executions.id),
+    triggerId: text("trigger_id")
+      .notNull()
+      .references(() => triggers.id),
+    source: text("source").notNull(),
+    externalId: text("external_id").notNull(),
+    payloadSha: text("payload_sha")
+      .notNull()
+      .references(() => blobs.sha256),
+    at: text("at").notNull().default(nowIso()),
+  },
+  (t) => [unique().on(t.externalId)],
+);
+
+/** Per-(trigger, channel) cursor for post-reconnect recovery scans — absent means "never
+ *  connected before," so a brand-new trigger doesn't replay a channel's backlog. */
+export const triggerCursors = sqliteTable(
+  "trigger_cursors",
+  {
+    triggerId: text("trigger_id")
+      .notNull()
+      .references(() => triggers.id),
+    channelId: text("channel_id").notNull(),
+    lastMessageId: text("last_message_id").notNull(),
+    updatedAt: text("updated_at").notNull().default(nowIso()),
+  },
+  (t) => [primaryKey({ columns: [t.triggerId, t.channelId] })],
+);

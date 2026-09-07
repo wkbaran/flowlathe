@@ -15,6 +15,13 @@
       "when": 1788715731496,
       "tag": "0001_empty_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788742158991,
+      "tag": "0002_elite_toad_men",
+      "breakpoints": true
     }
   ]
 }

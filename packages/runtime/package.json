@@ -22,6 +22,7 @@
     "@flowlathe/node-prompt": "workspace:*",
     "@flowlathe/node-router": "workspace:*",
     "@flowlathe/node-search": "workspace:*",
+    "@flowlathe/node-trigger": "workspace:*",
     "@flowlathe/node-user-input": "workspace:*"
   },
   "devDependencies": {

@@ -146,6 +146,33 @@ a valid bot token. Mentions of `@everyone`/`@here` and roles are stripped from e
 sends unless you explicitly set `DISCORD_ALLOW_MENTION_EVERYONE=1` / `DISCORD_ALLOW_MENTION_ROLES=1`.
 This toolset is outbound-only — there's no way yet for a Discord message to *start* a flow.
 
+### Discord triggers (starting a flow from a message)
+
+A `trigger` node lets a flow be started by an inbound event instead of only the canvas's Run
+button. Add one to a flow (`source: "discord"`), wire its `content`/`authorId`/`channelId`/
+`messageId` outputs like any other node's, and register it:
+
+```
+POST /api/triggers   { "flowId": "...", "source": "discord", "channelIds": ["123456789012345678"] }
+```
+
+This pins the trigger to the flow's *current* version — editing the flow on the canvas afterward
+does not change what the live trigger runs; re-pin explicitly with
+`POST /api/triggers/:id/repin`. Registration is rejected (409) if the graph has no `discord`
+trigger node, contains a `pause`/`userInput` node (nothing can answer one in a headless run), or
+requires a plugin toolset that isn't configured. `GET /api/triggers` lists every trigger with its
+live `active` status; `DELETE /api/triggers/:id` stops and removes one.
+
+Requires `DISCORD_BOT_TOKEN` and the **"MESSAGE CONTENT INTENT"** privileged Gateway Intent
+enabled for the bot in the
+[Discord Developer Portal](https://discord.com/developers/applications) — the single most common
+setup failure, since without it the bot connects but never receives message text. The bot's own
+messages are always ignored (no self-triggering loops); only messages in a trigger's own
+`channelIds` are admitted, independent of `DISCORD_ALLOWED_CHANNELS` (the outbound toolset's own
+allowlist). `DISCORD_RECOVERY_WINDOW_SECONDS` (default 900) and `DISCORD_RECOVERY_LIMIT` (default
+50) bound the post-reconnect scan that recovers messages missed during a gateway drop or server
+restart; a message id is only ever admitted once, surviving a restart.
+
 ## Loop/Map bodies
 
 A Loop/Map body can be an arbitrary multi-node subgraph — any chain, fan-out, or nested

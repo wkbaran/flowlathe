@@ -531,6 +531,11 @@ function accessorExpr(sourceNode: FlowNode, varRef: string, optional: boolean, s
       return sourceHandle === "output" ? `${varRef}${dot}results` : `${varRef}${dot}${sourceHandle}`;
     case "fetch":
       return sourceHandle === "output" ? `${varRef}${dot}content` : `${varRef}${dot}${sourceHandle}`;
+    // A trigger node has four output ports (content/authorId/channelId/messageId), none named
+    // "output" — same terminal-fallback override as search/fetch above. "content" is the
+    // fallback since it's the port a flow author cares about by default.
+    case "trigger":
+      return sourceHandle === "output" ? `${varRef}${dot}content` : `${varRef}${dot}${sourceHandle}`;
     default:
       return `${varRef}${dot}${sourceHandle}`;
   }

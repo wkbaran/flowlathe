@@ -11,6 +11,9 @@ export interface RunFlowOptions {
   flowVersionId: string;
   graph: FlowGraph;
   pluginToolsets?: ToolRegistration[] | undefined;
+  /** See `RunGraphOptions.seed` — how a trigger source (Discord) starts a headless run with a
+   *  `trigger` node's outputs already filled from the real event. */
+  seed?: Record<string, Record<string, string>> | undefined;
 }
 
 export interface RunFlowHandle {
@@ -20,7 +23,7 @@ export interface RunFlowHandle {
 
 /** Kicks off a flow execution asynchronously; callers get the ids back immediately. */
 export function runFlow(opts: RunFlowOptions): RunFlowHandle {
-  const { db, hub, scheduler, flowVersionId, graph, pluginToolsets } = opts;
+  const { db, hub, scheduler, flowVersionId, graph, pluginToolsets, seed } = opts;
   const { executionId, branchId } = startExecution(db, flowVersionId, "run");
   const { run, resolveSuspended, emit } = buildHostAndRun({
     db,
@@ -36,7 +39,7 @@ export function runFlow(opts: RunFlowOptions): RunFlowHandle {
   const hasOutgoing = new Set(graph.edges.map((e) => e.source));
   const terminalNodeIds = graph.nodes.map((n) => n.id).filter((id) => !hasOutgoing.has(id));
 
-  runGraph({ graph, run })
+  runGraph({ graph, run, seed })
     .then(({ outputs }) => {
       run.finish(Object.fromEntries(terminalNodeIds.map((id) => [id, outputs[id]])));
       finishExecution(db, executionId, "finished");

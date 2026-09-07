@@ -9,6 +9,7 @@ import {
 } from "./ControlFlowNodeViews.js";
 import { PromptNodeView } from "./PromptNodeView.js";
 import { FetchNodeView, SearchNodeView } from "./SearchFetchNodeViews.js";
+import { TriggerNodeView } from "./TriggerNodeView.js";
 
 export const nodeTypes = {
   prompt: PromptNodeView,
@@ -21,4 +22,5 @@ export const nodeTypes = {
   gate: GateNodeView,
   search: SearchNodeView,
   fetch: FetchNodeView,
+  trigger: TriggerNodeView,
 };

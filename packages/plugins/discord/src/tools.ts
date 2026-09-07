@@ -93,7 +93,7 @@ function readMessagesTool(client: DiscordClient, opts: DiscordToolsetOptions): T
     if (allowlistError) return toolFail(allowlistError);
     const before = typeof args["before"] === "string" ? args["before"] : undefined;
     const result = await guarded("discord", "read_messages", () =>
-      client.readMessages(channelId, clampLimit(args["limit"], 20, 100), before),
+      client.readMessages(channelId, { limit: clampLimit(args["limit"], 20, 100), ...(before !== undefined ? { before } : {}) }),
     );
     return result.ok ? toolOk(result.data.map(summarizeMessage)) : toolFail(result.error);
   };

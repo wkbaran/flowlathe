@@ -8,6 +8,7 @@ import { PauseNodeDataSchema, pauseEmitter } from "@flowlathe/node-pause";
 import { PromptNodeDataSchema, promptEmitter } from "@flowlathe/node-prompt";
 import { RouterNodeDataSchema, routerEmitter } from "@flowlathe/node-router";
 import { SearchNodeDataSchema, searchEmitter } from "@flowlathe/node-search";
+import { TriggerNodeDataSchema, triggerEmitter } from "@flowlathe/node-trigger";
 import { UserInputNodeDataSchema, userInputEmitter } from "@flowlathe/node-user-input";
 import type { ZodTypeAny } from "zod";
 
@@ -22,6 +23,7 @@ export const emitTable: Record<NodeKind, NodeEmitter<any>> = {
   gate: gateEmitter,
   search: searchEmitter,
   fetch: fetchEmitter,
+  trigger: triggerEmitter,
 };
 
 /** Parsed through before a node's data is serialized into the compiled script, so a schema
@@ -40,4 +42,5 @@ export const schemaTable: Record<NodeKind, ZodTypeAny> = {
   gate: GateNodeDataSchema,
   search: SearchNodeDataSchema,
   fetch: FetchNodeDataSchema,
+  trigger: TriggerNodeDataSchema,
 };

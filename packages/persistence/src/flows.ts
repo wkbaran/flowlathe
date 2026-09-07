@@ -52,6 +52,14 @@ export function getFlow(db: Db, id: string): FlowWithGraph | undefined {
   return { ...flow, flowVersionId: latest.id, version: latest.version, graph: latest.graphJson };
 }
 
+/** Returns the *exact* pinned version's graph — never the flow's latest. A trigger runs a
+ *  pinned `flowVersionId`, deliberately never HEAD (unlike step sessions, which resolve forward
+ *  to the latest version via `getLatestGraphForFlowVersion` below): editing a flow on the canvas
+ *  must not silently change what a live trigger does. */
+export function getGraphForFlowVersion(db: Db, flowVersionId: string): FlowGraph | undefined {
+  return db.select({ graph: flowVersions.graphJson }).from(flowVersions).where(eq(flowVersions.id, flowVersionId)).get()?.graph;
+}
+
 /** Resolves the flow owning `flowVersionId`, then returns that flow's CURRENT (latest-saved)
  *  graph. Step sessions bind to the version active at step-start, but the graph is a live
  *  editing surface — stepping forward should reflect edits made since. */

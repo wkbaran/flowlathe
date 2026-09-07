@@ -1,4 +1,4 @@
-import type { FlowGraph, PortSlot, Scheduler, ToolRegistration } from "@flowlathe/core";
+import { valueSlot, type FlowGraph, type PortSlot, type Scheduler, type ToolRegistration } from "@flowlathe/core";
 import { GraphEngine, type EngineSnapshot } from "@flowlathe/interpreter";
 import {
   createBranch,
@@ -57,12 +57,23 @@ function deserializeSnapshot(db: Db, payload: unknown): EngineSnapshot {
   return { outputs };
 }
 
+/** `seed` (see `RunGraphOptions.seed`) is baked into the very first snapshot rather than handled
+ *  by `GraphEngine` itself here — `stepOnce` always restores from the latest snapshot, so a
+ *  seeded trigger node's outputs need to already be present in stepIndex 0's payload to survive
+ *  a step-mode restore of a triggered execution, exactly like any other settled node's outputs. */
 export function startStepExecution(
   db: Db,
   flowVersionId: string,
+  seed?: Record<string, Record<string, string>>,
 ): { executionId: string; branchId: string; snapshotId: string } {
   const { executionId, branchId } = startExecution(db, flowVersionId, "step");
-  const snapshot = createSnapshot(db, { branchId, stepIndex: 0, payload: serializeSnapshot(db, { outputs: {} }) });
+  const outputs: EngineSnapshot["outputs"] = {};
+  if (seed) {
+    for (const [nodeId, ports] of Object.entries(seed)) {
+      outputs[nodeId] = Object.fromEntries(Object.entries(ports).map(([port, value]) => [port, valueSlot(value)]));
+    }
+  }
+  const snapshot = createSnapshot(db, { branchId, stepIndex: 0, payload: serializeSnapshot(db, { outputs }) });
   return { executionId, branchId, snapshotId: snapshot.id };
 }
 

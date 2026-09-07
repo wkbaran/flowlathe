@@ -1,4 +1,4 @@
-import { emptyFlowGraph } from "@flowlathe/core";
+import { emptyFlowGraph, type FlowGraph } from "@flowlathe/core";
 import {
   beginStep,
   createFlow,
@@ -10,8 +10,10 @@ import {
   runMigrations,
   startExecution,
 } from "@flowlathe/persistence";
+import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { stepBack } from "./stepper.js";
+import { ExecutionHub } from "./execution-hub.js";
+import { startStepExecution, stepOnce, stepBack } from "./stepper.js";
 
 let opened: OpenedDb;
 
@@ -53,5 +55,48 @@ describe("stepBack — state forking", () => {
 
     const forked = stepBack(opened.db, snapshot0.id);
     expect(listStateWritesForBranch(opened.db, forked.branchId)).toEqual([{ entry: "note", value: "hi", seq: 1 }]);
+  });
+});
+
+describe("startStepExecution — seed", () => {
+  function triggerGraph(): FlowGraph {
+    return {
+      nodes: [
+        { id: "t", type: "trigger", position: { x: 0, y: 0 }, data: { source: "discord", testPayload: "SHOULD_NOT_APPEAR" } },
+        { id: "b", type: "prompt", position: { x: 1, y: 0 }, data: { template: "got: {{input}}", providerId: "mock", modelId: "m" } },
+      ],
+      edges: [{ id: "t-b", source: "t", target: "b", sourceHandle: "content", targetHandle: "input" }],
+      state: [],
+    };
+  }
+
+  it("bakes the seed into the first snapshot, so stepping never dispatches the trigger", async () => {
+    const flow = createFlow(opened.db, "Triggered Flow", triggerGraph());
+    const { executionId, branchId } = startStepExecution(opened.db, flow.flowVersionId, {
+      t: { content: "REAL_MESSAGE", authorId: "u1", channelId: "c1", messageId: "m1" },
+    });
+
+    const hub = new ExecutionHub();
+    const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 4 } });
+
+    const first = await stepOnce({ db: opened.db, hub, scheduler, graph: flow.graph, executionId, branchId });
+    expect(first.done).toBe(false);
+    // The trigger node ("t") is already resolved by the seed — the very first step dispatches
+    // the downstream prompt directly, never the trigger itself.
+    expect(first.nodeId).toBe("b");
+
+    const second = await stepOnce({ db: opened.db, hub, scheduler, graph: flow.graph, executionId, branchId });
+    expect(second.done).toBe(true);
+  });
+
+  it("with no seed, a manual/canvas step-start still lets the trigger dispatch normally", async () => {
+    const flow = createFlow(opened.db, "Untriggered Flow", triggerGraph());
+    const { executionId, branchId } = startStepExecution(opened.db, flow.flowVersionId);
+
+    const hub = new ExecutionHub();
+    const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 4 } });
+
+    const first = await stepOnce({ db: opened.db, hub, scheduler, graph: flow.graph, executionId, branchId });
+    expect(first.nodeId).toBe("t");
   });
 });

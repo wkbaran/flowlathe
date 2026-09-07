@@ -129,7 +129,7 @@ describe("DiscordClient", () => {
       return new Response(JSON.stringify([]), { status: 200 });
     });
     const client = new DiscordClient({ botToken: "t", fetchImpl });
-    await client.readMessages("c1", 500);
+    await client.readMessages("c1", { limit: 500 });
     expect(seenUrl?.searchParams.get("limit")).toBe("100");
   });
 

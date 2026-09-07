@@ -97,6 +97,7 @@ const NODE_KIND_OPTIONS: NodeKind[] = [
   "gate",
   "search",
   "fetch",
+  "trigger",
 ];
 
 /** Mirrors @flowlathe/core's `requiredToolsets(graph)` over live xyflow nodes (rather than a
@@ -168,6 +169,8 @@ function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
       return { label: id, queryTemplate: "{{input}}", toolset: "searxng" };
     case "fetch":
       return { label: id, urlTemplate: "{{input}}", toolset: "firecrawl", format: "markdown" };
+    case "trigger":
+      return { label: id, source: "manual", testPayload: "" };
   }
 }
 
@@ -1122,6 +1125,32 @@ function NodeProperties(props: {
             value={(data["maxChars"] as number | undefined) ?? ""}
             onChange={(e) => onChange({ maxChars: e.target.value === "" ? undefined : Number(e.target.value) })}
           />
+        </>
+      )}
+
+      {type === "trigger" && (
+        <>
+          <Select
+            size="small"
+            value={(data["source"] as string) ?? "manual"}
+            onChange={(e) => onChange({ source: e.target.value })}
+            inputProps={{ "aria-label": "Trigger source" }}
+          >
+            <MenuItem value="manual">manual (canvas only)</MenuItem>
+            <MenuItem value="discord">discord</MenuItem>
+          </Select>
+          <TextField
+            size="small"
+            label="Test payload (used when run from the canvas)"
+            multiline
+            minRows={2}
+            value={(data["testPayload"] as string) ?? ""}
+            onChange={(e) => onChange({ testPayload: e.target.value })}
+          />
+          <Typography variant="caption" color="text.secondary">
+            When started by a real Discord trigger (not the canvas), this node&apos;s outputs are
+            filled from the actual message instead of the test payload above.
+          </Typography>
         </>
       )}
 

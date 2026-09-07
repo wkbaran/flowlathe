@@ -142,9 +142,14 @@ export class DiscordClient {
     return { messageIds };
   }
 
-  async readMessages(channelId: string, limit = 20, before?: string): Promise<DiscordMessage[]> {
-    const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, limit))) });
-    if (before) params.set("before", before);
+  /** `after` (rather than `before`) is what Phase E's post-reconnect recovery scan needs — Discord's
+   *  own API supports both on the same endpoint. The `discord_read_messages` tool only ever passes
+   *  `before` (reading recent history backward); recovery passes `after` (reading forward from a
+   *  cursor). Passing both is nonsensical and left to the caller to avoid. */
+  async readMessages(channelId: string, opts: { limit?: number; before?: string; after?: string } = {}): Promise<DiscordMessage[]> {
+    const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, opts.limit ?? 20))) });
+    if (opts.before) params.set("before", opts.before);
+    if (opts.after) params.set("after", opts.after);
     return this.request<DiscordMessage[]>("GET", `/channels/${channelId}/messages?${params.toString()}`);
   }
 

@@ -6,11 +6,14 @@ import { ensureDefaultMockProvider, getPluginCredential, openDb, runMigrations, 
 import { createSpotifyToolset, SpotifyClient, SPOTIFY_MANIFEST, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import { searxngToolsetFromEnv, SEARXNG_MANIFEST } from "@flowlathe/plugin-searxng";
 import { firecrawlToolsetFromEnv, FIRECRAWL_MANIFEST } from "@flowlathe/plugin-firecrawl";
-import { discordToolsetFromEnv, DISCORD_MANIFEST } from "@flowlathe/plugin-discord";
+import { discordClientFromEnv, discordToolsetFromEnv, DISCORD_MANIFEST } from "@flowlathe/plugin-discord";
+import { listTriggers } from "@flowlathe/persistence";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
+import { ExecutionHub } from "./execution-hub.js";
 import { discoverMcpToolsets, loadMcpServersConfig } from "./mcp-config.js";
 import { SchedulerRegistry } from "./scheduler-registry.js";
+import { TriggerRegistry } from "./triggers/registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -61,6 +64,23 @@ const { toolsets: mcpToolsets, statuses: mcpStatuses } = await discoverMcpToolse
 );
 pluginToolsets = [...pluginToolsets, ...mcpToolsets];
 
+/** Built here (not inside `buildApp`) so this `TriggerRegistry` observes the same execution-
+ *  completion events flow routes publish through it — see `app.ts`'s `hub` option. */
+const hub = new ExecutionHub();
+const discordBotToken = process.env["DISCORD_BOT_TOKEN"];
+const triggerRegistry = new TriggerRegistry({
+  db: opened.db,
+  hub,
+  scheduler: schedulerRegistry,
+  pluginToolsets,
+  discordClient: discordClientFromEnv(),
+  discordBotToken,
+  ...(process.env["DISCORD_RECOVERY_WINDOW_SECONDS"]
+    ? { recoveryWindowSeconds: Number(process.env["DISCORD_RECOVERY_WINDOW_SECONDS"]) }
+    : {}),
+  ...(process.env["DISCORD_RECOVERY_LIMIT"] ? { recoveryLimit: Number(process.env["DISCORD_RECOVERY_LIMIT"]) } : {}),
+});
+
 const app = buildApp({
   db: opened.db,
   credentialKey,
@@ -70,6 +90,8 @@ const app = buildApp({
   pluginToolsets,
   pluginManifests,
   mcpStatuses,
+  hub,
+  triggerRegistry,
 });
 
 app.listen({ port, host: "127.0.0.1" }, (err, address) => {
@@ -80,10 +102,23 @@ app.listen({ port, host: "127.0.0.1" }, (err, address) => {
   console.log(`flowlathe server listening on ${address}`);
 });
 
+/** Trigger startup happens *after* the app is listening — a slow or failing Discord gateway
+ *  connection must never prevent the server from serving the UI (CLAUDE.md's MCP-discovery
+ *  precedent, extended: that one blocks boot because it's synchronous with the tool registry the
+ *  first request needs; a trigger has no such dependency, so there's no reason to make anyone
+ *  wait on it). A trigger that fails to start is logged, not fatal to the others. */
+for (const trigger of listTriggers(opened.db).filter((t) => t.enabled)) {
+  triggerRegistry.start(trigger).catch((err: unknown) => {
+    console.error(`[triggers] failed to start trigger "${trigger.id}": ${(err as Error).message}`);
+  });
+}
+
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    app
-      .close()
+    triggerRegistry
+      .stopAll()
+      .catch(() => undefined)
+      .then(() => app.close())
       .catch(() => undefined)
       .finally(() => {
         opened.close();
