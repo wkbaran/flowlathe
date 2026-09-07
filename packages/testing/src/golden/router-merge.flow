@@ -1,0 +1,33 @@
+flow "router-merge" {
+  node seed: prompt @(0, 0) {
+    template = "code"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node router: router @(1, 0) {
+    routes = ["code", "prose"]
+    cases = [{value: "code", route: "code"}, {value: "prose", route: "prose"}]
+  }
+
+  node codeAnswer: prompt @(2, 0) {
+    template = "CODE: {{q}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node proseAnswer: prompt @(2, 1) {
+    template = "PROSE: {{q}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node merge: merge @(3, 0) {
+  }
+
+  seed.output -> router.input
+  router.code -> codeAnswer.q
+  router.prose -> proseAnswer.q
+  codeAnswer.output -> merge.in1
+  proseAnswer.output -> merge.in2
+}

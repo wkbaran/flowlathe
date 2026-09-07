@@ -1,0 +1,65 @@
+flow "router-nested" {
+  node seed: prompt @(0, 0) {
+    template = "a"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node outerRouter: router @(1, 0) {
+    routes = ["a", "b"]
+    cases = [{value: "a", route: "a"}, {value: "b", route: "b"}]
+  }
+
+  node innerRouter: router @(2, 0) {
+    routes = ["x", "y"]
+    cases = [{value: "a", route: "x"}, {value: "other", route: "y"}]
+  }
+
+  node innerX: prompt @(3, 0) {
+    template = "INNERX: {{v}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node innerY: prompt @(3, 1) {
+    template = "INNERY: {{v}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node innerMerge: merge @(4, 0) {
+  }
+
+  node innerFinal: prompt @(5, 0) {
+    template = "IF: {{v}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node otherBranch: prompt @(2, 2) {
+    template = "OTHER: {{v}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node outerMerge: merge @(6, 0) {
+  }
+
+  node finalConsumer: prompt @(7, 0) {
+    template = "DONE: {{v}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  seed.output -> outerRouter.input
+  outerRouter.a -> innerRouter.input
+  outerRouter.b -> otherBranch.v
+  innerRouter.x -> innerX.v
+  innerRouter.y -> innerY.v
+  innerX.output -> innerMerge.in1
+  innerY.output -> innerMerge.in2
+  innerMerge.output -> innerFinal.v
+  innerFinal.output -> outerMerge.in1
+  otherBranch.output -> outerMerge.in2
+  outerMerge.output -> finalConsumer.v
+}

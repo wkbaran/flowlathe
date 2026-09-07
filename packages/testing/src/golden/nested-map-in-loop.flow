@@ -1,0 +1,23 @@
+flow "nested-map-in-loop" {
+  node l: loop @(0, 0) {
+    initTemplate = "0"
+    accPortName = "acc"
+    stopValue = "[\"LX\",\"LY\"]"
+    maxIterations = 2
+    body {
+      node m: map @(1, 0) {
+        itemsTemplate = "[\"{{acc}}-x\",\"{{acc}}-y\"]"
+        itemPortName = "item"
+        maxConcurrency = 2
+        maxItems = 10
+        body {
+          node leaf: prompt @(2, 0) {
+            template = "{{item}}"
+            providerId = "mock"
+            modelId = "m"
+          }
+        }
+      }
+    }
+  }
+}

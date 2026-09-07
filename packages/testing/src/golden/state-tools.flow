@@ -1,0 +1,10 @@
+flow "state-tools" {
+  state notes: string merge=append
+
+  node a: prompt @(0, 0) {
+    template = "CALL_TOOL: write_state {\"entry\":\"notes\",\"value\":\"hello\"}"
+    providerId = "mock"
+    modelId = "m"
+    enableStateTools = true
+  }
+}

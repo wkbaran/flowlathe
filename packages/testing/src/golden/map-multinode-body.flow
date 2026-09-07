@@ -1,0 +1,23 @@
+flow "map-multinode-body" {
+  node m: map @(0, 0) {
+    itemsTemplate = "[\"x\",\"y\",\"z\"]"
+    itemPortName = "item"
+    maxConcurrency = 3
+    maxItems = 10
+    body {
+      node a: prompt @(1, 0) {
+        template = "{{item}}"
+        providerId = "mock"
+        modelId = "m"
+      }
+
+      node b: prompt @(2, 0) {
+        template = "next: {{input}}"
+        providerId = "mock"
+        modelId = "m"
+      }
+
+      a.output -> b.input
+    }
+  }
+}

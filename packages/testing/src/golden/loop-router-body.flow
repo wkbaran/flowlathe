@@ -1,0 +1,35 @@
+flow "loop-router-body" {
+  node l: loop @(0, 0) {
+    initTemplate = "seed"
+    accPortName = "input"
+    stopValue = "MERGED"
+    maxIterations = 3
+    body {
+      node r: router @(1, 0) {
+        routes = ["x", "y"]
+        cases = [{value: "seed", route: "x"}]
+        defaultRoute = "y"
+      }
+
+      node x: prompt @(2, 0) {
+        template = "X:{{input}}"
+        providerId = "mock"
+        modelId = "m"
+      }
+
+      node y: prompt @(2, 1) {
+        template = "Y:{{input}}"
+        providerId = "mock"
+        modelId = "m"
+      }
+
+      node merge: merge @(3, 0) {
+      }
+
+      r.x -> x.input
+      r.y -> y.input
+      x.output -> merge.in1
+      y.output -> merge.in2
+    }
+  }
+}

@@ -1,0 +1,20 @@
+flow "search-node" {
+  node seed: prompt @(0, 0) {
+    template = "give me a topic"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node s: search @(1, 0) {
+    queryTemplate = "{{topic}}"
+  }
+
+  node final: prompt @(2, 0) {
+    template = "results: {{r}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  seed.output -> s.topic
+  s.results -> final.r
+}

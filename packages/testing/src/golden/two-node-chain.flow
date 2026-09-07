@@ -1,0 +1,15 @@
+flow "two-node-chain" {
+  node a: prompt @(0, 0) {
+    template = "start"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node b: prompt @(1, 0) {
+    template = "next: {{input}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  a.output -> b.input
+}

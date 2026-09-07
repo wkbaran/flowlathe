@@ -1,0 +1,15 @@
+flow "map-fanout" {
+  node m: map @(0, 0) {
+    itemsTemplate = "[\"x\",\"y\",\"z\"]"
+    itemPortName = "item"
+    maxConcurrency = 3
+    maxItems = 10
+    body {
+      node body: prompt @(1, 0) {
+        template = "got: {{item}}"
+        providerId = "mock"
+        modelId = "m"
+      }
+    }
+  }
+}
