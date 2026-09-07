@@ -102,7 +102,8 @@ export function listStateWritesForBranch(db: Db, branchId: string): StateWriteRo
     .all();
   return rows.map((row) => {
     const bytes = getBlob(db, row.valueSha);
-    return { entry: row.entry, value: bytes ? JSON.parse(bytes.toString("utf-8")) : undefined, seq: row.seq };
+    if (!bytes) throw new Error(`state write value blob missing: ${row.valueSha}`);
+    return { entry: row.entry, value: JSON.parse(bytes.toString("utf-8")), seq: row.seq };
   });
 }
 
@@ -153,7 +154,8 @@ export function getStateSnapshotAsOf(db: Db, branchId: string, maxStepIndex: num
     const stepIndex = row.stepId ? stepIndexById.get(row.stepId) : undefined;
     if (row.stepId && stepIndex !== undefined && stepIndex > maxStepIndex) continue;
     const bytes = getBlob(db, row.valueSha);
-    const value = bytes ? JSON.parse(bytes.toString("utf-8")) : undefined;
+    if (!bytes) throw new Error(`state write value blob missing: ${row.valueSha}`);
+    const value = JSON.parse(bytes.toString("utf-8"));
     latest.set(row.entry, { entry: row.entry, value, seq: row.seq, merge: row.merge });
   }
   return [...latest.values()];

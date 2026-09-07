@@ -1,9 +1,11 @@
 import { emptyFlowGraph } from "@flowlathe/core";
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { type OpenedDb, openDb } from "./db.js";
 import { beginStep, startExecution } from "./executions.js";
 import { createFlow } from "./flows.js";
 import { runMigrations } from "./migrate.js";
+import { blobs, stateWrites } from "./schema.js";
 import {
   getStateDecls,
   getStateSnapshot,
@@ -94,5 +96,36 @@ describe("state writes/reads", () => {
     expect(listStateLineage(opened.db, branchId)).toEqual([
       { entry: "notes", writerNodeId: "writer-node", writerSeq: 1, readerNodeId: "reader-node" },
     ]);
+  });
+});
+
+describe("blob-loss safety (PLAN-EXECUTION-RETENTION.md S1)", () => {
+  it("listStateWritesForBranch throws, naming the sha, if the value blob is gone", () => {
+    const flow = createFlow(opened.db, "My Flow", emptyFlowGraph());
+    const branchId = startExecution(opened.db, flow.flowVersionId).branchId;
+    recordStateWrite(opened.db, { branchId, entry: "count", value: 1, merge: "replace", seq: 1 });
+
+    const sha = opened.db.select({ sha: stateWrites.valueSha }).from(stateWrites).get()!.sha;
+    // valueSha is a real FK, so this can only happen via a bug that bypasses FK enforcement
+    // (e.g. a GC candidate-scoping error) — simulated here by forcing the delete through.
+    opened.sqlite.pragma("foreign_keys = OFF");
+    opened.db.delete(blobs).where(eq(blobs.sha256, sha)).run();
+    opened.sqlite.pragma("foreign_keys = ON");
+
+    expect(() => listStateWritesForBranch(opened.db, branchId)).toThrowError(new RegExp(sha));
+  });
+
+  it("getStateSnapshotAsOf throws, naming the sha, if the value blob is gone", () => {
+    const flow = createFlow(opened.db, "My Flow", emptyFlowGraph());
+    const branchId = startExecution(opened.db, flow.flowVersionId).branchId;
+    const step0 = beginStep(opened.db, { branchId, nodeId: "a" });
+    recordStateWrite(opened.db, { branchId, stepId: step0, entry: "count", value: 1, merge: "replace", seq: 1 });
+
+    const sha = opened.db.select({ sha: stateWrites.valueSha }).from(stateWrites).get()!.sha;
+    opened.sqlite.pragma("foreign_keys = OFF");
+    opened.db.delete(blobs).where(eq(blobs.sha256, sha)).run();
+    opened.sqlite.pragma("foreign_keys = ON");
+
+    expect(() => getStateSnapshotAsOf(opened.db, branchId, 0)).toThrowError(new RegExp(sha));
   });
 });

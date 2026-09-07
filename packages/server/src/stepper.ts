@@ -47,7 +47,8 @@ function deserializeSnapshot(db: Db, payload: unknown): EngineSnapshot {
     for (const [port, slot] of Object.entries(slots)) {
       if (slot.kind === "value") {
         const bytes = getBlob(db, slot.ref);
-        outSlots[port] = { kind: "value", value: bytes ? bytes.toString("utf-8") : "" };
+        if (!bytes) throw new Error(`snapshot blob missing for ${nodeId}.${port}: ${slot.ref}`);
+        outSlots[port] = { kind: "value", value: bytes.toString("utf-8") };
       } else {
         outSlots[port] = slot as PortSlot;
       }

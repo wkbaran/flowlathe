@@ -6,6 +6,7 @@ import {
   listStateWritesForBranch,
   type OpenedDb,
   openDb,
+  putBlob,
   recordStateWrite,
   runMigrations,
   startExecution,
@@ -98,5 +99,25 @@ describe("startStepExecution — seed", () => {
 
     const first = await stepOnce({ db: opened.db, hub, scheduler, graph: flow.graph, executionId, branchId });
     expect(first.nodeId).toBe("t");
+  });
+});
+
+describe("stepOnce — blob-loss safety (PLAN-EXECUTION-RETENTION.md S1)", () => {
+  it("rejects, naming the sha, rather than silently restoring an empty string when a snapshot's blob is missing", async () => {
+    const flow = createFlow(opened.db, "My Flow", emptyFlowGraph());
+    const { executionId, branchId } = startExecution(opened.db, flow.flowVersionId, "step");
+
+    const sha = putBlob(opened.db, Buffer.from("gone", "utf-8"));
+    // Mirrors stepper.ts:28's SerializedSnapshotPayload shape: {outputs: {nodeId: {port: {kind, ref}}}}
+    createSnapshot(opened.db, { branchId, stepIndex: 0, payload: { outputs: { a: { output: { kind: "value", ref: sha } } } } });
+    // snapshot payload refs are not FK columns (CLAUDE.md) — deleting the blob directly is legal.
+    opened.sqlite.prepare("DELETE FROM blobs WHERE sha256 = ?").run(sha);
+
+    const hub = new ExecutionHub();
+    const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 4 } });
+
+    await expect(
+      stepOnce({ db: opened.db, hub, scheduler, graph: emptyFlowGraph(), executionId, branchId }),
+    ).rejects.toThrow(new RegExp(sha));
   });
 });
