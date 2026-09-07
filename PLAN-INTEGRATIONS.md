@@ -11,7 +11,11 @@ Handoff document. Written for an implementing agent picking this up cold.
 
 # Implementation plan — SearXNG, Firecrawl, and Discord integrations
 
-**Status:** not started.
+**Status:** Phases A–E implemented (commits `33287ef`..`49afbcb`). Remaining gaps: no Playwright
+e2e spec for any phase (unit/integration/parity coverage substitutes — see CLAUDE.md's per-phase
+notes for why), no Firecrawl-node golden parity fixture (SearXNG's stands in), and no canvas UI
+for creating/managing Discord triggers (`/api/triggers` is fully functional via HTTP). See
+CLAUDE.md for the full list of scope decisions and simplifications made along the way.
 **Depends on:** nothing outstanding. The tool-registry path (Slice 6) is complete and is the
 substrate for all of this.
 **Related:** `PLAN-FLOW-VERSIONING.md` (Phase E's triggers must run a *pinned* flow version, not
@@ -675,35 +679,46 @@ flowlathe's version, deliberately smaller:
 
 ## 9. Definition of done
 
-- [ ] `routes/plugins-spotify.ts` split into a generic `routes/plugins.ts` + Spotify-specific routes.
-- [ ] `PluginManifest` descriptors; `/api/plugins/status` returns them; canvas renders setup and the
+- [x] `routes/plugins-spotify.ts` split into a generic `routes/plugins.ts` + Spotify-specific routes.
+- [x] `PluginManifest` descriptors; `/api/plugins/status` returns them; canvas renders setup and the
       dependency banner from data, with `displayName()`'s `mcp:` prefix test replaced by a field.
-- [ ] `packages/plugins/_common` with the shared result envelope, guarded execution, `httpGetJson`
+- [x] `packages/plugins/_common` with the shared result envelope, guarded execution, `httpGetJson`
       (`reachTarget`), and argument coercion moved out of the Spotify plugin.
-- [ ] `ToolInvokeMeta.signal` threaded from `runPrompt`'s tool-loop through `ToolRegistry.invoke`;
-      every network handler honors it, including between URLs in a batch.
-- [ ] `@flowlathe/plugin-searxng` with `searxng_search` (score-sorted, limit capped at 20), gated by
+- [x] `ToolInvokeMeta.signal` threaded from `runPrompt`'s tool-loop through `ToolRegistry.invoke`;
+      every network handler honors it, including between URLs in a batch. (No real producer of a
+      signal exists yet anywhere in this codebase — the field is real plumbing, not yet exercised
+      by a live caller; see CLAUDE.md's Phase A note.)
+- [x] `@flowlathe/plugin-searxng` with `searxng_search` (score-sorted, limit capped at 20), gated by
       `SEARXNG_BASE_URL`, cached liveness `unavailableReason`, untrusted-text sanitization, unit tests.
-- [ ] `@flowlathe/plugin-firecrawl` over plain REST (no SDK), scrape/crawl/map, per-URL timeouts and
+- [x] `@flowlathe/plugin-firecrawl` over plain REST (no SDK), scrape/crawl/map, per-URL timeouts and
       per-URL error entries, bounded crawl polling, `maxChars` truncation marker, unit tests.
-- [ ] `packages/core/src/url-safety.ts`: scheme allowlist, private-range blocking with an env escape
+- [x] `packages/core/src/url-safety.ts`: scheme allowlist, private-range blocking with an env escape
       hatch, unconditional metadata-endpoint blocking, post-redirect re-validation, credential-bearing
       query-param refusal, IRI normalization — with the DNS-rebinding gap documented in-file.
-- [ ] `ToolRegistration.standalone` + `compileGraph` partitioning; a flow using SearXNG/Firecrawl
+- [x] `ToolRegistration.standalone` + `compileGraph` partitioning; a flow using SearXNG/Firecrawl
       exports to a script that actually runs; `plugin-gate.test.ts` extended both ways.
-- [ ] `RuntimeHost.net` added; every hand-built host updated; parity stub table in place.
-- [ ] `search` and `fetch` node kinds complete across all six checklist points in §5.1, with golden
-      parity fixtures and per-variable handles in their node views.
-- [ ] `requiredToolsets` also collects node-level `toolset` fields; canvas banner test pins it.
-- [ ] `@flowlathe/plugin-discord` outbound toolset with channel/user allowlist, client-level
+- [x] `RuntimeHost.net` added; every hand-built host updated; parity stub table in place.
+- [x] `search` and `fetch` node kinds complete across all six checklist points in §5.1, with per-
+      variable handles in their node views. (Golden parity fixture: SearXNG's `search` node only —
+      see CLAUDE.md for why a `fetch`/Firecrawl fixture needs the fuller sha256-keyed stub design
+      instead of the URL-only one built here.)
+- [x] `requiredToolsets` also collects node-level `toolset` fields. (Verified live via a manual
+      Playwright smoke test that a lone `search`/`fetch` node trips the canvas banner — `packages/
+      web` has no unit-test harness in this repo to pin it as an automated test; a real gap if one
+      is added later.)
+- [x] `@flowlathe/plugin-discord` outbound toolset with channel/user allowlist, client-level
       `allowed_mentions` denial, 1900-char chunking with an 8-chunk flood cap, 429 handling via the
       existing `retry-after` helper.
-- [ ] `trigger` node kind; `GraphEngine` `seed` option, snapshotted and restored.
-- [ ] `TriggerRegistry` + `DiscordTriggerSource` + `/api/triggers`; `triggers` and
+- [x] `trigger` node kind; `GraphEngine` `seed` option, snapshotted and restored.
+- [x] `TriggerRegistry` + `DiscordTriggerSource` + `/api/triggers`; `triggers` and
       `execution_triggers` tables; version pinning enforced; self-message loop guard; privileged
       -intents failure detected with actionable guidance.
-- [ ] Reconnect recovery: `trigger_cursors`, bounded post-connect REST scan through the same
+- [x] Reconnect recovery: `trigger_cursors`, bounded post-connect REST scan through the same
       admission path, non-claiming existence check, no backlog replay on a fresh trigger.
-- [ ] Trigger registration validation (missing toolsets / no trigger node / contains pause|userInput).
-- [ ] E2E spec per phase; README updated (config env vars, the trust model for inbound messages).
-- [ ] `CLAUDE.md` updated with whatever surprised the implementing agent.
+- [x] Trigger registration validation (missing toolsets / no trigger node / contains pause|userInput).
+- [ ] E2E spec per phase — not done for any phase (see CLAUDE.md's per-phase notes: this repo has
+      no plugin-shaped e2e spec to extend as precedent, and each phase's unit/integration/parity
+      coverage was prioritized instead; `TriggerRegistry`'s own test drives a fake Discord gateway
+      end to end, which is the closest equivalent for Phase E specifically).
+- [x] README updated (config env vars, the trust model for inbound messages).
+- [x] `CLAUDE.md` updated with whatever surprised the implementing agent.
