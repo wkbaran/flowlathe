@@ -33,4 +33,31 @@ describe("SimpleScheduler", () => {
       /unknown provider/,
     );
   });
+
+  it("never reaches the adapter for a call queued behind a full semaphore once it's aborted", async () => {
+    const log: string[] = [];
+    const scheduler = new SimpleScheduler({
+      p: { adapter: trackingAdapter(50, log), maxParallel: 1 },
+    });
+    const controller = new AbortController();
+    const first = scheduler.submit({ providerId: "p", modelId: "m", nodeId: "a", prompt: "x" });
+    // "b" queues behind "a" (maxParallel: 1) — abort it while it's still waiting on the semaphore.
+    const second = scheduler.submit({ providerId: "p", modelId: "m", nodeId: "b", prompt: "x", signal: controller.signal });
+    controller.abort(new Error("cancelled"));
+
+    await expect(second).rejects.toThrow(/cancelled/);
+    await first;
+    expect(log).toEqual(["start:a", "end:a"]);
+  });
+
+  it("throws immediately for an already-aborted signal, without acquiring the semaphore", async () => {
+    const log: string[] = [];
+    const scheduler = new SimpleScheduler({ p: { adapter: trackingAdapter(5, log), maxParallel: 1 } });
+    const controller = new AbortController();
+    controller.abort(new Error("pre-aborted"));
+    await expect(
+      scheduler.submit({ providerId: "p", modelId: "m", nodeId: "a", prompt: "x", signal: controller.signal }),
+    ).rejects.toThrow(/pre-aborted/);
+    expect(log).toEqual([]);
+  });
 });

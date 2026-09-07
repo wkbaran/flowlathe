@@ -38,12 +38,44 @@ export class MockProviderAdapter implements ProviderAdapter {
         return { content: "", finishReason: "tool_calls", toolCalls: [{ id: "call_1", name: name!, args: JSON.parse(argsJson!) }] };
       }
     }
+
+    // `FAIL: <message>` / `DELAY_MS: <n>` are testing conventions alongside `CALL_TOOL:`, added
+    // for PLAN-CANCELLATION.md's failing-fan-out fixture: a deterministic way to make one sibling
+    // reject quickly while another sits in an interruptible sleep, so the abort half of
+    // cancellation (not just the await-drain half) is actually exercised. See CLAUDE.md.
+    const failMatch = req.prompt.match(/^FAIL:\s*(.*)$/m);
+    if (failMatch) {
+      throw new Error(failMatch[1]);
+    }
+    const delayMatch = req.prompt.match(/^DELAY_MS:\s*(\d+)/m);
+    if (delayMatch) {
+      await interruptibleSleep(Number(delayMatch[1]), req.signal);
+    }
+
     const content = this.responses
       ? lookup(this.responses, req.nodeId, req.prompt)
       : `[mock:${req.modelId}] ${req.prompt}`;
     req.onToken?.(content);
     return { content, finishReason: "stop" };
   }
+}
+
+function interruptibleSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal!.reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function lookup(responses: Map<string, string>, nodeId: string, prompt: string): string {

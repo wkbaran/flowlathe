@@ -1,0 +1,13 @@
+flow "failing-fan-out" {
+  node boom: prompt @(0, 0) {
+    template = "FAIL: boom node exploded"
+    providerId = "mock"
+    modelId = "m"
+  }
+
+  node slow: prompt @(0, 1) {
+    template = "DELAY_MS: 2000 slow node"
+    providerId = "mock"
+    modelId = "m"
+  }
+}

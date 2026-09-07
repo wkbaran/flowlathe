@@ -1,4 +1,4 @@
-import { renderTemplate, type RuntimeHost } from "@flowlathe/core";
+import { nodeFailureEvent, renderTemplate, type RuntimeHost } from "@flowlathe/core";
 import { FirecrawlClient } from "@flowlathe/plugin-firecrawl";
 import type { FetchSpec } from "./schema.js";
 
@@ -40,7 +40,7 @@ export async function runFetch(ctx: RuntimeHost, spec: FetchSpec, inputs: Record
   const url = renderTemplate(spec.urlTemplate, inputs);
   try {
     const client = clientFromEnv(ctx.net.fetch, spec.maxChars);
-    const outcome = await client.scrapeOne(url, { formats: [spec.format] });
+    const outcome = await client.scrapeOne(url, { formats: [spec.format] }, ctx.cancellation.signal);
     if (outcome.error !== undefined) {
       throw new Error(outcome.error);
     }
@@ -55,7 +55,7 @@ export async function runFetch(ctx: RuntimeHost, spec: FetchSpec, inputs: Record
     });
     return { content: outcome.content };
   } catch (err) {
-    ctx.emit({ kind: "node_failed", nodeId: spec.id, error: (err as Error).message });
+    ctx.emit(nodeFailureEvent(spec.id, err));
     throw err;
   }
 }

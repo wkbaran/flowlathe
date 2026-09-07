@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { requiredToolsets, type RunEvent } from "@flowlathe/core";
+import { createRunControl, requiredToolsets, type RunEvent } from "@flowlathe/core";
 import { parse } from "@flowlathe/dsl";
 import { runGraph } from "@flowlathe/interpreter";
 import { SimpleScheduler } from "@flowlathe/providers";
@@ -50,6 +50,7 @@ export async function cmdRun(argv: string[]): Promise<number> {
   const scheduler = new SimpleScheduler(buildScheduler(providers));
   const emit = (event: RunEvent): void => console.log(JSON.stringify(event));
   const state = createStateStore(emit, { decls: graph.state });
+  const cancellation = createRunControl();
   const run = createRun({
     host: {
       scheduler,
@@ -60,8 +61,9 @@ export async function cmdRun(argv: string[]): Promise<number> {
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      cancellation,
       net: { fetch: globalThis.fetch },
-      ...createSuspendRegistry(),
+      ...createSuspendRegistry(cancellation),
     },
   });
 

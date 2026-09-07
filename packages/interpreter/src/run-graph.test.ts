@@ -1,4 +1,4 @@
-import type { FlowGraph, RunEvent } from "@flowlathe/core";
+import { createRunControl, type FlowGraph, type RunEvent } from "@flowlathe/core";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
 import {
   createContextStore,
@@ -27,7 +27,8 @@ function makeRun(): { run: ReturnType<typeof createRun>; events: RunEvent[]; hos
     events.push(e);
   };
   const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
-  const suspendRegistry = createSuspendRegistry();
+  const cancellation = createRunControl();
+  const suspendRegistry = createSuspendRegistry(cancellation);
   const state = createStateStore(emit, { decls: [] });
   const run = createRun({
     host: {
@@ -39,6 +40,7 @@ function makeRun(): { run: ReturnType<typeof createRun>; events: RunEvent[]; hos
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      cancellation,
       net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
       ...suspendRegistry,
     },
@@ -88,6 +90,7 @@ function identityRun(events: RunEvent[] = []): ReturnType<typeof createRun> {
     mock: { adapter: { kind: "identity", call: async (req: { prompt: string }) => ({ content: req.prompt, finishReason: "stop" }) }, maxParallel: 8 },
   });
   const state = noopState();
+  const cancellation = createRunControl();
   return createRun({
     host: {
       scheduler,
@@ -98,8 +101,9 @@ function identityRun(events: RunEvent[] = []): ReturnType<typeof createRun> {
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      cancellation,
       net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
-      ...createSuspendRegistry(),
+      ...createSuspendRegistry(cancellation),
     },
   });
 }
@@ -185,6 +189,7 @@ describe("runGraph — fan-out concurrency", () => {
       },
     };
     const scheduler = new SimpleScheduler({ mock: { adapter, maxParallel: 8 } });
+    const cancellation = createRunControl();
     const run = createRun({
       host: {
         scheduler,
@@ -195,8 +200,9 @@ describe("runGraph — fan-out concurrency", () => {
         llmConfig: createLlmConfigStore(),
         context: createContextStore(),
         tools: createToolRegistry(stateToolset(noopState())),
+        cancellation,
         net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
-        ...createSuspendRegistry(),
+        ...createSuspendRegistry(cancellation),
       },
     });
 
@@ -219,6 +225,92 @@ describe("runGraph — fan-out concurrency", () => {
     expect(finished).toHaveLength(3);
     expect(outputs["a"]).toBe("a-done");
   });
+});
+
+describe("runGraph — cancellation (PLAN-CANCELLATION.md D1)", () => {
+  function runWithAdapter(adapter: { kind: string; call: (req: { nodeId: string; prompt: string }) => Promise<{ content: string; finishReason: string }> }) {
+    const scheduler = new SimpleScheduler({ mock: { adapter, maxParallel: 8 } });
+    const cancellation = createRunControl();
+    return createRun({
+      host: {
+        scheduler,
+        blobs: new InMemoryBlobStore(),
+        emit: () => undefined,
+        clock: { now: () => 0 },
+        state: noopState(),
+        llmConfig: createLlmConfigStore(),
+        context: createContextStore(),
+        tools: createToolRegistry(stateToolset(noopState())),
+        cancellation,
+        net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
+        ...createSuspendRegistry(cancellation),
+      },
+    });
+  }
+
+  it("drains the in-flight sibling before rejecting — nothing settles after the reject", async () => {
+    const order: string[] = [];
+    let releaseB: (() => void) | undefined;
+    const bGate = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    const run = runWithAdapter({
+      kind: "custom",
+      call: async (req) => {
+        if (req.nodeId === "boom") throw new Error("boom");
+        await bGate;
+        order.push("b-settled");
+        return { content: "b-done", finishReason: "stop" };
+      },
+    });
+    const graph: FlowGraph = {
+      nodes: [node("boom", "prompt", promptData("x")), node("b", "prompt", promptData("y"))],
+      edges: [],
+      state: [],
+    };
+
+    const resultPromise = runGraph({ graph, run });
+    resultPromise.catch(() => order.push("rejected"));
+    await new Promise((r) => setImmediate(r));
+    releaseB?.();
+    await expect(resultPromise).rejects.toThrow("boom");
+    expect(order).toEqual(["b-settled", "rejected"]);
+  });
+
+  it(
+    "rejects rather than hanging when the surviving sibling is parked in a suspend",
+    async () => {
+      let releaseBoom: (() => void) | undefined;
+      const boomGate = new Promise<void>((resolve) => {
+        releaseBoom = resolve;
+      });
+      const run = runWithAdapter({
+        kind: "custom",
+        call: async (req) => {
+          if (req.nodeId === "boom") {
+            await boomGate;
+            throw new Error("boom");
+          }
+          return { content: "seed-done", finishReason: "stop" };
+        },
+      });
+      // "seed" feeds "p"'s required input port so "p" gets admitted (and parks itself in
+      // ctx.suspend) independently of "boom" — held back by `boomGate` until "p" is safely
+      // parked, so this test doesn't race on microtask ordering between the two.
+      const graph: FlowGraph = {
+        nodes: [node("boom", "prompt", promptData("x")), node("seed", "prompt", promptData("y")), node("p", "pause", { message: "hold" })],
+        edges: [{ id: "e1", source: "seed", target: "p", targetHandle: "input" }],
+        state: [],
+      };
+
+      const resultPromise = runGraph({ graph, run });
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      releaseBoom?.();
+      await expect(resultPromise).rejects.toThrow("boom");
+    },
+    5_000,
+  );
 });
 
 describe("runGraph — pause / user input suspend-resume", () => {
@@ -277,6 +369,7 @@ describe("runGraph — loop", () => {
         maxParallel: 8,
       },
     });
+    const cancellation = createRunControl();
     const run = createRun({
       host: {
         scheduler,
@@ -287,8 +380,9 @@ describe("runGraph — loop", () => {
         llmConfig: createLlmConfigStore(),
         context: createContextStore(),
         tools: createToolRegistry(stateToolset(noopState())),
+        cancellation,
         net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
-        ...createSuspendRegistry(),
+        ...createSuspendRegistry(cancellation),
       },
     });
     const { outputs } = await runGraph({ graph, run });
@@ -298,6 +392,7 @@ describe("runGraph — loop", () => {
   it("a loop body's conversation memory accumulates by static node id, not its scoped activation key", async () => {
     const contextStore = createContextStore();
     const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
+    const cancellation = createRunControl();
     const runWithContext = createRun({
       host: {
         scheduler,
@@ -308,8 +403,9 @@ describe("runGraph — loop", () => {
         llmConfig: createLlmConfigStore(),
         context: contextStore,
         tools: createToolRegistry(stateToolset(noopState())),
+        cancellation,
         net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
-        ...createSuspendRegistry(),
+        ...createSuspendRegistry(cancellation),
       },
     });
     const graph: FlowGraph = {

@@ -1,6 +1,7 @@
 import {
   dropOldestHalf,
   estimateTokenCount,
+  nodeFailureEvent,
   renderContextText,
   renderTemplate,
   splitOldestHalf,
@@ -17,8 +18,8 @@ export async function runPrompt(
   ctx: RuntimeHost,
   spec: PromptSpec,
   inputs: Record<string, string>,
-  signal?: AbortSignal,
 ): Promise<PromptResult> {
+  const signal = ctx.cancellation.signal;
   const contextKey = spec.contextNodeId ?? spec.id;
   const renderedPrompt = renderTemplate(spec.template, inputs);
   ctx.emit({ kind: "node_started", nodeId: spec.id });
@@ -38,6 +39,7 @@ export async function runPrompt(
     let prompt = finalPrompt;
     let result;
     for (let round = 0; ; round++) {
+      signal.throwIfAborted();
       result = await ctx.scheduler.submit({
         providerId: spec.providerId,
         modelId: spec.modelId,
@@ -46,6 +48,7 @@ export async function runPrompt(
         temperature,
         topK,
         tools,
+        signal,
         onToken: (token) => ctx.emit({ kind: "token", nodeId: spec.id, token }),
       });
       if (!result.toolCalls || result.toolCalls.length === 0) break;
@@ -84,7 +87,7 @@ export async function runPrompt(
       latencyMs,
     };
   } catch (err) {
-    ctx.emit({ kind: "node_failed", nodeId: spec.id, error: (err as Error).message });
+    ctx.emit(nodeFailureEvent(spec.id, err));
     throw err;
   }
 }

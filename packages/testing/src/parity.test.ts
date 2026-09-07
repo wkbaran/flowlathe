@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { failingFanOutGraph, failingFanOutResponses } from "./golden/failing-fan-out.js";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
 import { loopRouterBodyGraph, loopRouterBodyResponses } from "./golden/loop-router-body.js";
 import { mapFanoutGraph, mapFanoutResponses } from "./golden/map-fanout.js";
@@ -10,7 +11,7 @@ import { routerNestedGraph, routerNestedResponses } from "./golden/router-nested
 import { searchNodeEnv, searchNodeGraph, searchNodeNetTable, searchNodeResponses } from "./golden/search-node.js";
 import { stateToolsGraph, stateToolsResponses } from "./golden/state-tools.js";
 import { twoNodeChainGraph, twoNodeChainResponses } from "./golden/two-node-chain.js";
-import { traceViaCompiledScript, traceViaInterpreter } from "./parity.js";
+import { failureTraceViaCompiledScript, failureTraceViaInterpreter, traceViaCompiledScript, traceViaInterpreter } from "./parity.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -37,6 +38,21 @@ describe("interpreter/compiler parity", () => {
       const viaInterpreter = await traceViaInterpreter(fanOutGraph, fanOutResponses);
       const viaCompiled = traceViaCompiledScript(fanOutGraph, fanOutResponses);
       expect(viaCompiled).toEqual(viaInterpreter);
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a deliberately failing fan-out: one sibling fails, the other is cancelled mid-flight",
+    async () => {
+      const viaInterpreter = await failureTraceViaInterpreter(failingFanOutGraph, failingFanOutResponses);
+      const viaCompiled = failureTraceViaCompiledScript(failingFanOutGraph, failingFanOutResponses);
+      expect(viaCompiled.finished).toEqual(viaInterpreter.finished);
+      expect(viaCompiled.failed).toEqual(viaInterpreter.failed);
+      expect(viaCompiled.cancelled).toEqual(viaInterpreter.cancelled);
+      expect(viaInterpreter.finished).toEqual([]);
+      expect(viaInterpreter.failed).toEqual([{ nodeId: "boom", error: "boom node exploded" }]);
+      expect(viaInterpreter.cancelled).toEqual(["slow"]);
     },
     15_000,
   );

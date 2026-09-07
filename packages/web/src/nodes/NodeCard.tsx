@@ -1,7 +1,7 @@
 import { useTheme, type Theme } from "@mui/material";
 import type { ReactNode } from "react";
 
-export type NodeStatus = "idle" | "running" | "done" | "failed" | "skipped" | "suspended";
+export type NodeStatus = "idle" | "running" | "done" | "failed" | "skipped" | "suspended" | "cancelled";
 
 export function statusColorOf(theme: Theme, status: NodeStatus): string {
   return {
@@ -11,6 +11,9 @@ export function statusColorOf(theme: Theme, status: NodeStatus): string {
     failed: theme.palette.error.main,
     skipped: theme.palette.text.disabled,
     suspended: theme.palette.warning.main,
+    // Warning, not error: a cancelled node was merely stopped by a failing sibling elsewhere —
+    // it didn't itself fail, so it shouldn't paint the same red as `failed` (CLAUDE.md).
+    cancelled: theme.palette.warning.main,
   }[status];
 }
 

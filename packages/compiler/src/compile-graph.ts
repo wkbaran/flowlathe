@@ -159,7 +159,7 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   const standaloneEnvVars = [...new Set(standaloneImports.flatMap((s) => s.env))];
   const unsupportedToolsetsLiteral = JSON.stringify(unsupportedToolsets);
 
-  return `import type { RunEvent } from "@flowlathe/core";
+  return `import { allOrCancel, createRunControl, type RunEvent } from "@flowlathe/core";
 import {
   createContextStore,
   createLlmConfigStore,
@@ -202,6 +202,7 @@ ${providerEntries}
   });
   const emit = (event: RunEvent): void => console.log(JSON.stringify(event));
   const state = createStateStore(emit, { decls: STATE_DECLS });
+  const cancellation = createRunControl();
   const rt = createRun({
     host: {
       scheduler,
@@ -212,8 +213,9 @@ ${providerEntries}
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry([...stateToolset(state)${standaloneToolsetCalls ? `, ${standaloneToolsetCalls}` : ""}]),
+      cancellation,
       net: { fetch: globalThis.fetch },
-      ...createSuspendRegistry(),
+      ...createSuspendRegistry(cancellation),
     },
   });
 
@@ -369,8 +371,14 @@ function emitLevel(level: string[], ctx: RegionCtx, isOptional: (id: string) => 
     return `${indent}const ${emitName(nodeId, ctx)} = ${callExpr(nodeId, ctx, isOptional)};`;
   }
   const decls = level.map((id) => emitName(id, ctx)).join(", ");
-  const calls = level.map((nodeId) => `${indent}  ${callExpr(nodeId, ctx, isOptional)},`).join("\n");
-  return `${indent}const [${decls}] = await Promise.all([\n${calls}\n${indent}]);`;
+  // `callExpr` always prefixes `await` (every other call site wants a sequential await) — strip
+  // it here so `allOrCancel` receives genuine un-awaited Promises to run concurrently. Awaiting
+  // each element inline (the pre-existing shape, `Promise.all([await p1, await p2])`) evaluates
+  // them one at a time before the array is even built, silently defeating the whole point of a
+  // fan-out level; `allOrCancel` additionally requires real Promises (it calls `.catch` on each
+  // element), so this was surfaced as a hard crash rather than staying a silent perf bug.
+  const calls = level.map((nodeId) => `${indent}  ${callExpr(nodeId, ctx, isOptional).replace(/^await /, "")},`).join("\n");
+  return `${indent}const [${decls}] = await allOrCancel(rt.cancellation, [\n${calls}\n${indent}]);`;
 }
 
 function emitScope(scopePrefix: Scope, ctx: RegionCtx, isOptional: (id: string) => boolean, indent: string): string[] {

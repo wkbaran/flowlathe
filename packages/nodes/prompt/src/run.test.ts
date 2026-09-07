@@ -1,4 +1,5 @@
 import {
+  createRunControl,
   READ_STATE_TOOL,
   WRITE_STATE_TOOL,
   type ContextMessage,
@@ -69,6 +70,7 @@ function fakeCtx(overrides: Partial<RuntimeHost> = {}): { ctx: RuntimeHost; even
       replace: (nodeId, messages) => contexts.set(nodeId, messages),
     },
     tools: fakeToolRegistry(state),
+    cancellation: createRunControl(),
     net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
     ...overrides,
   };

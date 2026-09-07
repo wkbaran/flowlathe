@@ -1,8 +1,10 @@
 import {
+  nodeFailureEvent,
   renderTemplate,
   type ContextStore,
   type LlmConfigStore,
   type PromptResult,
+  type RunControl,
   type RunEvent,
   type RuntimeHost,
   type StateStore,
@@ -26,6 +28,7 @@ export interface Run {
   readonly llmConfig: LlmConfigStore;
   readonly context: ContextStore;
   readonly tools: ToolRegistry;
+  readonly cancellation: RunControl;
   emit(event: RunEvent): void;
   prompt(spec: PromptSpec, inputs: Record<string, string>): Promise<PromptResult>;
   route(spec: RouterSpec, inputs: Record<string, string>): Promise<RouterResult>;
@@ -57,6 +60,7 @@ export function createRun(opts: CreateRunOptions): Run {
     llmConfig: host.llmConfig,
     context: host.context,
     tools: host.tools,
+    cancellation: host.cancellation,
     emit: (event) => host.emit(event),
     prompt: (spec, inputs) => runPrompt(host, spec, inputs),
     route: (spec, inputs) => runRouter(host, spec, inputs),
@@ -74,7 +78,7 @@ export function createRun(opts: CreateRunOptions): Run {
       try {
         const result = await loopUntil(
           init,
-          { maxIterations: spec.maxIterations, stopValue: spec.stopValue },
+          { maxIterations: spec.maxIterations, stopValue: spec.stopValue, control: host.cancellation },
           body,
         );
         host.emit({
@@ -87,7 +91,7 @@ export function createRun(opts: CreateRunOptions): Run {
         });
         return result;
       } catch (err) {
-        host.emit({ kind: "node_failed", nodeId: spec.id, error: (err as Error).message });
+        host.emit(nodeFailureEvent(spec.id, err));
         throw err;
       }
     },
@@ -108,7 +112,11 @@ export function createRun(opts: CreateRunOptions): Run {
       }
       host.emit({ kind: "node_started", nodeId: spec.id });
       try {
-        const results = await mapConcurrent(items as string[], { concurrency: spec.maxConcurrency }, body);
+        const results = await mapConcurrent(
+          items as string[],
+          { concurrency: spec.maxConcurrency, control: host.cancellation },
+          body,
+        );
         const output = JSON.stringify(results);
         host.emit({
           kind: "node_finished",
@@ -120,7 +128,7 @@ export function createRun(opts: CreateRunOptions): Run {
         });
         return results;
       } catch (err) {
-        host.emit({ kind: "node_failed", nodeId: spec.id, error: (err as Error).message });
+        host.emit(nodeFailureEvent(spec.id, err));
         throw err;
       }
     },

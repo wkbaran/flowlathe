@@ -1,4 +1,4 @@
-import type { RuntimeHost } from "@flowlathe/core";
+import { nodeFailureEvent, type RuntimeHost } from "@flowlathe/core";
 import type { RouterSpec } from "./schema.js";
 
 export interface RouterResult {
@@ -24,7 +24,7 @@ export async function runRouter(
   const route = match?.route ?? spec.defaultRoute;
   if (!route) {
     const err = new Error(`router "${spec.id}" has no matching case for input "${input}" and no defaultRoute`);
-    ctx.emit({ kind: "node_failed", nodeId: spec.id, error: err.message });
+    ctx.emit(nodeFailureEvent(spec.id, err));
     throw err;
   }
   ctx.emit({

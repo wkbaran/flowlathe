@@ -1,4 +1,4 @@
-import type { FlowGraph } from "@flowlathe/core";
+import { createRunControl, type FlowGraph } from "@flowlathe/core";
 import { MockProviderAdapter, SimpleScheduler } from "@flowlathe/providers";
 import {
   createContextStore,
@@ -22,6 +22,7 @@ const promptData = (template: string) => ({ template, providerId: "mock", modelI
 function makeRun(): ReturnType<typeof createRun> {
   const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
   const state = createStateStore(() => undefined, { decls: [] });
+  const cancellation = createRunControl();
   return createRun({
     host: {
       scheduler,
@@ -32,8 +33,9 @@ function makeRun(): ReturnType<typeof createRun> {
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry(stateToolset(state)),
+      cancellation,
       net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
-      ...createSuspendRegistry(),
+      ...createSuspendRegistry(cancellation),
     },
   });
 }

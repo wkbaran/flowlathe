@@ -1,4 +1,4 @@
-import type { RunEvent, Scheduler, StateDecl } from "@flowlathe/core";
+import { createRunControl, type RunControl, type RunEvent, type Scheduler, type StateDecl } from "@flowlathe/core";
 import {
   appendRunEvent,
   beginStep,
@@ -29,6 +29,10 @@ export interface BuiltHost {
   run: Run;
   resolveSuspended: (key: string, value: string) => void;
   emit: (event: RunEvent) => void;
+  /** Left on the built host rather than consumed here (PLAN-CANCELLATION.md D3) — the engine
+   *  cancels it internally on a failing fan-out; a future operator-initiated cancel route can
+   *  reach it too, with no further plumbing. */
+  cancellation: RunControl;
 }
 
 /** The one place a `Run` gets wired to persistence + SSE, shared by run mode and step mode. */
@@ -48,7 +52,8 @@ export function buildHostAndRun(opts: {
 }): BuiltHost {
   const { db, hub, scheduler, executionId, branchId, stateDecls, stateReplay, pluginToolsets } = opts;
   const stepIdByNodeId = new Map<string, string>();
-  const suspendRegistry = createSuspendRegistry();
+  const cancellation = createRunControl();
+  const suspendRegistry = createSuspendRegistry(cancellation);
 
   const emit = (event: RunEvent): void => {
     const seq = appendRunEvent(db, { executionId, branchId, kind: event.kind, payload: event });
@@ -84,6 +89,12 @@ export function buildHostAndRun(opts: {
         finishStep(db, stepId, "failed");
         recordFailedResponse(db, { executionId, branchId, stepId, nodeId: event.nodeId, error: event.error });
       }
+    } else if (event.kind === "node_cancelled") {
+      // No responses row: there is no response, and a failed-response row for a node that was
+      // merely stopped (not itself the cause of the failure) is exactly the noise this event
+      // kind exists to avoid — see CLAUDE.md.
+      const stepId = stepIdByNodeId.get(event.nodeId);
+      if (stepId) finishStep(db, stepId, "cancelled");
     } else if (event.kind === "node_skipped") {
       const stepId = beginStep(db, { branchId, nodeId: event.nodeId });
       stepIdByNodeId.set(event.nodeId, stepId);
@@ -127,11 +138,12 @@ export function buildHostAndRun(opts: {
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
       tools: createToolRegistry([...stateToolset(state), ...(pluginToolsets ?? [])]),
+      cancellation,
       net: { fetch: globalThis.fetch },
       ...suspendRegistry,
       emit: hostEmit,
     },
   });
 
-  return { run, resolveSuspended: suspendRegistry.resolveSuspended, emit };
+  return { run, resolveSuspended: suspendRegistry.resolveSuspended, emit, cancellation };
 }

@@ -552,6 +552,8 @@ export function Canvas() {
         setSuspended((prev) => prev.filter((s) => s.nodeId !== (event as { nodeId: string }).nodeId));
       } else if (kind === "node_failed") {
         setNodeStatus((prev) => ({ ...prev, [baseNodeId((event as { nodeId: string }).nodeId)]: "failed" }));
+      } else if (kind === "node_cancelled") {
+        setNodeStatus((prev) => ({ ...prev, [baseNodeId((event as { nodeId: string }).nodeId)]: "cancelled" }));
       } else if (kind === "node_skipped") {
         setNodeStatus((prev) => ({ ...prev, [baseNodeId((event as { nodeId: string }).nodeId)]: "skipped" }));
       } else if (kind === "node_suspended") {
@@ -579,6 +581,7 @@ export function Canvas() {
       "token",
       "node_finished",
       "node_failed",
+      "node_cancelled",
       "node_skipped",
       "node_suspended",
       "state_write",
@@ -1704,6 +1707,8 @@ function describeEvent(event: RunEvent): string {
       return `${event.nodeId}: finished -> ${event.output}`;
     case "node_failed":
       return `${event.nodeId}: failed (${event.error})`;
+    case "node_cancelled":
+      return `${event.nodeId}: cancelled (${event.reason})`;
     case "node_skipped":
       return `${event.nodeId}: skipped (${event.reason})`;
     case "node_suspended":

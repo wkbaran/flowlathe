@@ -19,7 +19,7 @@ describe("compileGraph", () => {
     expect(script).toContain("rt.finish({ n_b: n_b.output });");
   });
 
-  it("emits a Promise.all for a fan-out level", () => {
+  it("emits an allOrCancel for a fan-out level", () => {
     const graph: FlowGraph = {
       nodes: [
         { id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "a", providerId: "mock", modelId: "m" } },
@@ -29,6 +29,6 @@ describe("compileGraph", () => {
       state: [],
     };
     const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
-    expect(script).toContain("await Promise.all([");
+    expect(script).toContain("await allOrCancel(rt.cancellation, [");
   });
 });

@@ -1,4 +1,4 @@
-import type { RuntimeHost } from "@flowlathe/core";
+import { nodeFailureEvent, type RuntimeHost } from "@flowlathe/core";
 import type { MergeSpec } from "./schema.js";
 
 export interface MergeResult {
@@ -20,7 +20,7 @@ export async function runMerge(
   const output = inputs["in1"] ?? inputs["in2"];
   if (output === undefined) {
     const err = new Error(`merge "${spec.id}" was dispatched with no input value on either side`);
-    ctx.emit({ kind: "node_failed", nodeId: spec.id, error: err.message });
+    ctx.emit(nodeFailureEvent(spec.id, err));
     throw err;
   }
   ctx.emit({

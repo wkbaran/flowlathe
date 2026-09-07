@@ -172,15 +172,29 @@ export class GraphEngine {
       .sort((a, b) => (this.rank.get(a)! - this.rank.get(b)!) || a.localeCompare(b));
   }
 
-  /** Dispatches every currently-ready activation, repeating until nothing is left. */
+  /** Dispatches every currently-ready activation, repeating until nothing is left. On the first
+   *  rejection (PLAN-CANCELLATION.md D1), cancels the run and awaits every in-flight sibling's
+   *  settlement before rethrowing — so nothing runs, emits, or persists after the caller sees
+   *  this reject. */
   async runToCompletion(): Promise<RunGraphResult> {
-    while (this.remaining().length > 0 || this.running.size > 0) {
-      const ready = this.readyNodeIds();
-      for (const id of ready) this.admit(id);
-      if (this.running.size === 0) {
-        throw new Error(`cycle detected or missing upstream node among: ${this.remaining().join(", ")}`);
+    try {
+      while (this.remaining().length > 0 || this.running.size > 0) {
+        const ready = this.readyNodeIds();
+        for (const id of ready) this.admit(id);
+        if (this.running.size === 0) {
+          throw new Error(`cycle detected or missing upstream node among: ${this.remaining().join(", ")}`);
+        }
+        await Promise.race(this.running.values());
       }
-      await Promise.race(this.running.values());
+    } catch (err) {
+      this.run.cancellation.cancel(err);
+      // Snapshot into an array first: `admit`'s `.finally` deletes a settling node from `running`
+      // before `Promise.race` above resolves, so the rejecting node is already gone from the map
+      // by the time this catch runs, and the remaining entries delete themselves as the drain
+      // proceeds — iterating the live map while it mutates is the bug this snapshot avoids. This
+      // loop cannot re-admit: `admit` is only ever called from the loop above, which has exited.
+      await Promise.allSettled([...this.running.values()]);
+      throw err;
     }
     return { outputs: this.collectOutputs() };
   }

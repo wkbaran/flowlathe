@@ -1,4 +1,4 @@
-import type { RuntimeHost } from "@flowlathe/core";
+import { createRunControl, type RuntimeHost } from "@flowlathe/core";
 import { describe, expect, it } from "vitest";
 import { runRouter } from "./run.js";
 
@@ -14,6 +14,7 @@ function fakeCtx(): RuntimeHost {
     llmConfig: { get: () => ({}), set: () => undefined },
     context: { get: () => [], append: () => undefined, replace: () => undefined },
     tools: { specsFor: () => [], invoke: async () => "", missingToolsets: () => [] },
+    cancellation: createRunControl(),
     net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
   };
 }

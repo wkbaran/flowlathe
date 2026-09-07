@@ -3,6 +3,7 @@ import { normalizeForRoundTrip, parse, print, type FlowFile } from "@flowlathe/d
 import type { FlowGraph } from "@flowlathe/core";
 import { describe, expect, it } from "vitest";
 
+import { failingFanOutGraph } from "./golden/failing-fan-out.js";
 import { fanOutGraph } from "./golden/fan-out.js";
 import { loopRouterBodyGraph } from "./golden/loop-router-body.js";
 import { mapFanoutGraph } from "./golden/map-fanout.js";
@@ -20,6 +21,7 @@ import { twoNodeChainGraph } from "./golden/two-node-chain.js";
  *    pnpm --filter @flowlathe/testing exec tsx -e '...' (see PLAN-FLOW-DSL.md history, or just
  *    print(golden) and paste it over the .flow file when a deliberate format change lands). */
 const GOLDEN: { slug: string; graph: FlowGraph }[] = [
+  { slug: "failing-fan-out", graph: failingFanOutGraph },
   { slug: "fan-out", graph: fanOutGraph },
   { slug: "loop-router-body", graph: loopRouterBodyGraph },
   { slug: "map-fanout", graph: mapFanoutGraph },

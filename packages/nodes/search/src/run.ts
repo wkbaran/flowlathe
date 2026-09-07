@@ -1,4 +1,4 @@
-import { renderTemplate, type RuntimeHost } from "@flowlathe/core";
+import { nodeFailureEvent, renderTemplate, type RuntimeHost } from "@flowlathe/core";
 import { SearxngClient, summarizeSearxngResults } from "@flowlathe/plugin-searxng";
 import type { SearchSpec } from "./schema.js";
 
@@ -39,18 +39,22 @@ export async function runSearch(ctx: RuntimeHost, spec: SearchSpec, inputs: Reco
   const query = renderTemplate(spec.queryTemplate, inputs);
   try {
     const client = clientFromEnv(ctx.net.fetch);
-    const results = await client.search(query, {
-      ...(spec.categories !== undefined ? { categories: spec.categories } : {}),
-      ...(spec.engines !== undefined ? { engines: spec.engines } : {}),
-      ...(spec.timeRange !== undefined ? { timeRange: spec.timeRange } : {}),
-      ...(spec.limit !== undefined ? { limit: spec.limit } : {}),
-    });
+    const results = await client.search(
+      query,
+      {
+        ...(spec.categories !== undefined ? { categories: spec.categories } : {}),
+        ...(spec.engines !== undefined ? { engines: spec.engines } : {}),
+        ...(spec.timeRange !== undefined ? { timeRange: spec.timeRange } : {}),
+        ...(spec.limit !== undefined ? { limit: spec.limit } : {}),
+      },
+      ctx.cancellation.signal,
+    );
     const output = JSON.stringify(summarizeSearxngResults(results));
     const latencyMs = ctx.clock.now() - start;
     ctx.emit({ kind: "node_finished", nodeId: spec.id, output, renderedPrompt: query, finishReason: "stop", latencyMs });
     return { results: output };
   } catch (err) {
-    ctx.emit({ kind: "node_failed", nodeId: spec.id, error: (err as Error).message });
+    ctx.emit(nodeFailureEvent(spec.id, err));
     throw err;
   }
 }

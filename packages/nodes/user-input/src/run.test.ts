@@ -1,4 +1,4 @@
-import type { RunEvent, RuntimeHost } from "@flowlathe/core";
+import { createRunControl, type RunEvent, type RuntimeHost } from "@flowlathe/core";
 import { describe, expect, it } from "vitest";
 import { runUserInput } from "./run.js";
 
@@ -21,6 +21,7 @@ describe("runUserInput", () => {
       llmConfig: { get: () => ({}), set: () => undefined },
       context: { get: () => [], append: () => undefined, replace: () => undefined },
       tools: { specsFor: () => [], invoke: async () => "", missingToolsets: () => [] },
+      cancellation: createRunControl(),
       net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
     };
 

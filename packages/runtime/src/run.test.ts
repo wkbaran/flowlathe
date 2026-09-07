@@ -1,4 +1,4 @@
-import type { RunEvent, RuntimeHost } from "@flowlathe/core";
+import { createRunControl, type RunEvent, type RuntimeHost } from "@flowlathe/core";
 import { describe, expect, it } from "vitest";
 import { createContextStore } from "./context-store.js";
 import { createLlmConfigStore } from "./llm-config-store.js";
@@ -14,6 +14,7 @@ function testHost(): { host: RuntimeHost; events: RunEvent[] } {
     events.push(e);
   };
   const state = createStateStore(emit, { decls: [] });
+  const cancellation = createRunControl();
   const host: RuntimeHost = {
     scheduler: { submit: async (req) => ({ content: `echo:${req.prompt}`, finishReason: "stop" }) },
     blobs: new InMemoryBlobStore(),
@@ -23,8 +24,9 @@ function testHost(): { host: RuntimeHost; events: RunEvent[] } {
     llmConfig: createLlmConfigStore(),
     context: createContextStore(),
     tools: createToolRegistry(stateToolset(state)),
+    cancellation,
     net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
-    ...createSuspendRegistry(),
+    ...createSuspendRegistry(cancellation),
   };
   return { host, events };
 }

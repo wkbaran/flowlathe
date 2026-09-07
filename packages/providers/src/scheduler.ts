@@ -46,7 +46,14 @@ export class SimpleScheduler implements Scheduler {
   async submit(req: ProviderCallRequest): Promise<ProviderCallResult> {
     const entry = this.providers.get(req.providerId);
     if (!entry) throw new Error(`unknown provider: "${req.providerId}"`);
+    req.signal?.throwIfAborted();
     const release = await entry.semaphore.acquire();
+    // Re-check after the acquire: a call queued behind a full semaphore must not fire a brand-new
+    // provider request after the run was cancelled while it waited (PLAN-CANCELLATION.md S5).
+    if (req.signal?.aborted) {
+      release();
+      req.signal.throwIfAborted();
+    }
     try {
       return await entry.adapter.call(req);
     } finally {

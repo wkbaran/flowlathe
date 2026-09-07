@@ -1,4 +1,4 @@
-import type { RunEvent, RuntimeHost } from "@flowlathe/core";
+import { createRunControl, type RunEvent, type RuntimeHost } from "@flowlathe/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runFetch } from "./run.js";
 
@@ -19,6 +19,7 @@ function fakeCtx(fetchImpl: typeof fetch): { ctx: RuntimeHost; events: RunEvent[
     llmConfig: { get: () => ({}), set: () => undefined },
     context: { get: () => [], append: () => undefined, replace: () => undefined },
     tools: { specsFor: () => [], invoke: async () => "", missingToolsets: () => [] },
+    cancellation: createRunControl(),
     net: { fetch: fetchImpl },
   };
   return { ctx, events };

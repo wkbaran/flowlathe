@@ -978,3 +978,96 @@ rediscover them the hard way.
     it strips — the `u` flag is load-bearing for the astral tag-character range.
   - **This stops cheap tricks, not a competent injection.** Stripping hidden characters and
     bounding length raises the floor; don't cite it as a defense against a determined adversary.
+- **PLAN-CANCELLATION.md landed the producer half of cancellation** (`@flowlathe/core`'s
+  `cancellation.ts`: `RunControl`/`createRunControl`/`RunCancelled`/`isCancellation`/
+  `nodeFailureEvent`/`allOrCancel`) — the consumer half (`ProviderCallRequest.signal`/
+  `ToolInvokeMeta.signal`, read by the provider adapters) already existed but nothing ever
+  constructed or forwarded a real signal. Scope and non-obvious points for whoever touches this
+  next:
+  - **Cancellation is produced by the engine, not the caller, and is cooperative — cancel *and*
+    drain, never either alone.** `GraphEngine.runToCompletion` (`packages/interpreter/src/
+    run-graph.ts`) catches the first sibling rejection, calls `this.run.cancellation.cancel(err)`,
+    then `await`s every other in-flight sibling's settlement (snapshotting `this.running.values()`
+    into an array first — see the pre-existing `remaining()` re-admission note this file already
+    had) before rethrowing the original error. Aborting alone would still let a node that ignores
+    its signal emit an event after `run_failed`; draining alone leaves external side effects
+    (Discord sends, Firecrawl scrapes) running in the background. Together they guarantee nothing
+    persists or emits after the caller observes the rejection, while a synchronous node with no
+    await point (Merge) still completes and emits `node_finished` — ordering is guaranteed,
+    instantaneous stopping is not.
+  - **The control lives on `RuntimeHost.cancellation` (mirrored as `Run.cancellation`), not on
+    `DispatchFn`'s signature**, because `RuntimeHost`/`Run` is the one object every node runner and
+    the emitted script's `rt` already receive — same ambient-field family as `state`/`context`/
+    `tools`/`llmConfig`. Widening `DispatchFn` would have touched every node package's dispatch
+    entry for no benefit. `buildHostAndRun` (`packages/server/src/host-builder.ts`) constructs one
+    `RunControl` per execution and returns it on `BuiltHost` (unused today — no operator-initiated
+    cancel route exists yet — but this is exactly where a future `POST /executions/:id/cancel`
+    would reach in).
+  - **`createSuspendRegistry` now takes the `RunControl` and rejects every pending suspend on
+    abort** (`packages/runtime/src/suspend-registry.ts`) — without this, the drain above hangs
+    forever the moment a fan-out has one sibling failing and another parked in a `pause`/
+    `userInput` node, since nothing else would ever settle that node's promise. This is the single
+    easiest way to turn the visible "siblings keep running after failure" bug into an invisible
+    hang instead — pinned by `run-graph.test.ts`'s "rejects rather than hanging when the surviving
+    sibling is parked in a suspend" test (give a test like this an explicit timeout; the failure
+    mode it guards is a hang, which otherwise just looks like a stuck suite).
+  - **`allOrCancel` (`@flowlathe/core`) is the *only* correct way to fan out concurrent work in
+    either engine — a bare `Promise.all` anywhere in this path silently reintroduces the exact bug
+    this plan closes.** The three sites: `packages/runtime/src/combinators.ts`'s `mapConcurrent`
+    (used by both engines' Loop/Map dispatch — `createRun`'s `loop`/`map` wrappers pass
+    `host.cancellation` through), and `packages/compiler/src/compile-graph.ts`'s `emitLevel` (the
+    compiled script's per-region fan-out level). `GraphEngine.runToCompletion`'s own top-level
+    admission loop deliberately does **not** use `allOrCancel` — it keeps `Promise.race` for
+    admission and a plain `Promise.allSettled` for the post-failure drain, rethrowing the original
+    `Promise.race` error directly. This is why the interpreter's multi-failure error selection is
+    non-deterministic (whichever `Promise.race` observed first) while the compiled script's
+    (`allOrCancel`, used per fan-out level) is deterministic (lowest array index) — a real,
+    deliberately-accepted engine difference for the case where *two* siblings fail at once; every
+    fixture only pins the single-failure case, where both agree.
+  - **A real, previously-latent compiled-script bug surfaced switching `emitLevel` from
+    `Promise.all` to `allOrCancel`.** `callExpr` has always prefixed its generated call with
+    `await` (every *other* call site — a single-node level, a router branch, a loop/map body node
+    — wants a sequential await), so a multi-node fan-out level used to emit
+    `Promise.all([await rt.prompt(...), await rt.prompt(...)])` — each array element's `await`
+    evaluates and fully waits for that call *before* the next element is even constructed, making
+    "concurrent" fan-out levels in every compiled script silently sequential all along. This was
+    invisible under `Promise.all` (it tolerates plain resolved values, not just Promises), but
+    `allOrCancel` calls `.catch` on each element and crashes with `p.catch is not a function` the
+    moment it receives an already-resolved value instead of a live Promise. Fixed by stripping the
+    leading `await ` from each element specifically inside `emitLevel`'s multi-node branch
+    (`.replace(/^await /, "")`) so `allOrCancel` receives genuine unsettled Promises — this also
+    means compiled-script fan-out levels are now *actually* concurrent for the first time, not
+    just cosmetically labeled as such. No existing test asserted on the array-element text, so
+    this needed no test updates, only the fix itself.
+  - **The mock provider's `FAIL:`/`DELAY_MS:` prompt-text sentinels are a testing convention**,
+    alongside the pre-existing `CALL_TOOL:` one (`packages/providers/src/mock.ts`): `FAIL: <msg>`
+    throws synchronously-ish (after the scheduler's semaphore acquire), `DELAY_MS: <n>` awaits an
+    interruptible sleep that rejects with `signal.reason` the moment `req.signal` aborts, then
+    falls through to the ordinary response lookup/echo. **`DELAY_MS:` actually honoring `signal`
+    is load-bearing, not a convenience** — it's what makes `packages/testing/src/golden/
+    failing-fan-out.ts` (one `FAIL:` node, one `DELAY_MS: 2000` node, no edges between them) prove
+    the abort genuinely reached the provider adapter: without it, the "slow" sibling would just
+    complete normally after 2s and emit `node_finished` (correctly ordered, so the drain-half of
+    the fix would still look correct), silently failing to test the abort half at all.
+  - **`SimpleScheduler.submit` checks `req.signal` on *both* sides of the semaphore acquire**
+    (`packages/providers/src/scheduler.ts`) — the second check is the one that matters: a call
+    queued behind a full semaphore must not fire a brand-new provider request after the run was
+    cancelled while it waited. `AffinityScheduler` (the real production scheduler, used by
+    `SchedulerRegistry` against live Ollama/OpenAI-compat providers) was **not** given the same
+    treatment — every test, the CLI, and the parity harness all construct `SimpleScheduler`
+    directly with `MockProviderAdapter`, so that's the scheduler this plan's tests actually
+    exercise; a production run against a real provider queued behind `AffinityScheduler`'s ticket
+    queue can still fire after cancellation. Flagged here as a real, tracked gap — not silently
+    dropped, just out of this plan's stated scope (`packages/providers/src/scheduler.ts` is the
+    only scheduler file it names).
+  - **`contracts.ts`'s `ToolInvokeMeta.signal` doc comment used to claim "currently: never, in
+    this codebase" and pointed at a CLAUDE.md cancellation note that didn't exist yet** — both are
+    now stale-corrected in place (this is that note). A tool handler that ignores `meta.signal`
+    still runs to completion regardless — SearXNG's and Firecrawl's handlers pass it to `fetch`,
+    Spotify's and Discord's don't (pre-existing, unrelated to this plan).
+  - **No operator-initiated cancel, no per-node/per-run timeouts, and `executions.status =
+    "cancelled"` all remain deliberately unbuilt** (a failure-driven cancellation still ends the
+    execution as `"failed"` — `"cancelled"` is reserved for a future operator-initiated cancel).
+    `BuiltHost.cancellation` and the `node_cancelled` event/`steps.status = "cancelled"` plumbing
+    are what a future cancel route or timeout policy would hang off of, with no further plumbing
+    needed in the interpreter, compiler, or node packages.

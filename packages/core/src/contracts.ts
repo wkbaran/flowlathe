@@ -1,4 +1,5 @@
 import type { NeverReason, SuspendReason } from "./activation.js";
+import type { RunControl } from "./cancellation.js";
 import type { CompactionMethod, ContextMessage, ContextStore, LlmConfigStore } from "./context.js";
 import type { MergeRule, StateStore } from "./state.js";
 
@@ -26,11 +27,11 @@ export interface ToolCall {
 
 export interface ToolInvokeMeta {
   activationKey: string;
-  /** Set when the caller has a real cancellation signal available (currently: never, in this
-   *  codebase — see CLAUDE.md's "cancellation is a real gap" note). Threaded through so a
-   *  network-backed handler (SearXNG/Firecrawl/Discord) can pass it to `fetch` and check it
-   *  between URLs in a batch the moment a producer exists; the built-in state tools ignore it
-   *  harmlessly since they do no I/O. */
+  /** The run's cancellation signal (see `RuntimeHost.cancellation`, CLAUDE.md's cancellation
+   *  note), threaded through so a network-backed handler (SearXNG/Firecrawl) can pass it to
+   *  `fetch` and check it between URLs in a batch; the built-in state tools ignore it harmlessly
+   *  since they do no I/O. Honoring it is per-plugin — Spotify's and Discord's handlers don't
+   *  currently pass it to their own `fetch` calls. */
   signal?: AbortSignal | undefined;
 }
 
@@ -126,6 +127,7 @@ export type RunEvent =
       latencyMs: number;
     }
   | { kind: "node_failed"; nodeId: string; error: string }
+  | { kind: "node_cancelled"; nodeId: string; reason: string }
   | { kind: "node_skipped"; nodeId: string; reason: NeverReason }
   | { kind: "node_suspended"; nodeId: string; activationKey: string; reason: SuspendReason }
   | {
@@ -171,6 +173,11 @@ export interface RuntimeHost {
   llmConfig: LlmConfigStore;
   context: ContextStore;
   tools: ToolRegistry;
+  /** This execution's cancellation channel — see `@flowlathe/core`'s `cancellation.ts` and
+   *  CLAUDE.md's cancellation note. Produced once per execution by the engine's caller and
+   *  carried ambiently so every node runner can check/forward it without a `DispatchFn`
+   *  signature change. */
+  cancellation: RunControl;
   /** Outbound HTTP for node kinds that fetch (search/fetch) — injected, never a bare global
    *  `fetch`, so the parity harness, unit tests, and e2e run fully offline against a stub. The
    *  production value is just Node's global `fetch`; this stays a plain type here so `core`
