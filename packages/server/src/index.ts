@@ -8,6 +8,7 @@ import { searxngToolsetFromEnv, SEARXNG_MANIFEST } from "@flowlathe/plugin-searx
 import { firecrawlToolsetFromEnv, FIRECRAWL_MANIFEST } from "@flowlathe/plugin-firecrawl";
 import { discordClientFromEnv, discordToolsetFromEnv, DISCORD_MANIFEST } from "@flowlathe/plugin-discord";
 import { listTriggers } from "@flowlathe/persistence";
+import { resolveAllowedHosts } from "./allowed-hosts.js";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
 import { ExecutionHub } from "./execution-hub.js";
@@ -20,6 +21,7 @@ import { TriggerRegistry } from "./triggers/registry.js";
 const here = dirname(fileURLToPath(import.meta.url));
 
 const port = Number(process.env["PORT"] ?? 4310);
+const host = process.env["HOST"] ?? "127.0.0.1";
 const dbPath = process.env["FLOWLATHE_DB_PATH"] ?? join(here, "..", "data", "flowlathe.sqlite");
 const dataDir = process.env["FLOWLATHE_DATA_DIR"] ?? dirname(dbPath);
 const staticRoot = process.env["FLOWLATHE_STATIC_ROOT"] ?? join(here, "..", "..", "web", "dist");
@@ -47,6 +49,8 @@ const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
 
 const pluginManifests: PluginManifest[] = [SPOTIFY_MANIFEST, SEARXNG_MANIFEST, FIRECRAWL_MANIFEST, DISCORD_MANIFEST];
 
+const allowedHosts = resolveAllowedHosts();
+
 const spotifyClientId = process.env["SPOTIFY_CLIENT_ID"];
 let spotifyConfig: SpotifyOAuthConfig | undefined;
 let pluginToolsets: ToolRegistration[] = [];
@@ -55,6 +59,10 @@ if (spotifyClientId) {
     clientId: spotifyClientId,
     redirectUri: process.env["SPOTIFY_REDIRECT_URI"] ?? `http://127.0.0.1:${port}/api/plugins/spotify/oauth/callback`,
   };
+  // An operator-overridden SPOTIFY_REDIRECT_URI points the OAuth callback at a non-loopback
+  // host; without this, the callback itself would 403 against the Host allowlist, and the
+  // failure would look like a broken OAuth dance rather than a host check.
+  allowedHosts.push(new URL(spotifyConfig.redirectUri).hostname);
   const spotifyClient = new SpotifyClient({
     config: spotifyConfig,
     tokens: {
@@ -108,9 +116,18 @@ const app = buildApp({
   triggerRegistry,
   flowsDir,
   flowsHub,
+  allowedHosts,
 });
 
-const host = process.env["HOST"] ?? "127.0.0.1";
+/** PLAN-NETWORK-POSTURE.md: the API is unauthenticated, so a non-loopback bind is only ever
+ *  safe behind something else (a reverse proxy doing auth, a container's own network
+ *  namespace) — warn at the one moment an operator is actually looking at the terminal. */
+if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
+  console.warn(
+    `[flowlathe] listening on ${host}, not loopback — the API has no authentication; ` +
+      "only publish this to a network you trust.",
+  );
+}
 
 app.listen({ port, host }, (err, address) => {
   if (err) {

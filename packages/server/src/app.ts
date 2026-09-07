@@ -3,6 +3,7 @@ import type { PluginManifest, ToolRegistration } from "@flowlathe/core";
 import type { Db } from "@flowlathe/persistence";
 import { SPOTIFY_MANIFEST, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import Fastify, { type FastifyInstance } from "fastify";
+import { DEFAULT_ALLOWED_HOSTS, isHostAllowed } from "./allowed-hosts.js";
 import { ExecutionHub } from "./execution-hub.js";
 import { flowsDir as defaultFlowsDir } from "./flow-store.js";
 import { FlowsHub } from "./flows-hub.js";
@@ -48,10 +49,19 @@ export interface BuildAppOptions {
   /** Shared with the caller the same way `hub` is, so `index.ts`'s file watcher and this app's
    *  `/api/flows/events` SSE route publish/subscribe to the same topic. Defaults to a fresh one. */
   flowsHub?: FlowsHub;
+  /** PLAN-NETWORK-POSTURE.md: the `Host` header allowlist. Defaults to loopback only
+   *  (`DEFAULT_ALLOWED_HOSTS`) — the API is unauthenticated, so this is the one thing standing
+   *  between a public web page and a request landing on this server via DNS rebinding. */
+  allowedHosts?: string[];
 }
 
 export function buildApp(opts: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
+  const allowedHosts = opts.allowedHosts ?? DEFAULT_ALLOWED_HOSTS;
+  app.addHook("onRequest", async (request, reply) => {
+    if (isHostAllowed(request.headers.host, allowedHosts)) return;
+    await reply.code(403).send({ error: "forbidden host" });
+  });
   const hub = opts.hub ?? new ExecutionHub();
   const flowsDir = opts.flowsDir ?? defaultFlowsDir();
   const flowsHub = opts.flowsHub ?? new FlowsHub();
