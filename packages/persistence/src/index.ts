@@ -17,4 +17,5 @@ export * from "./backfill.js";
 export * from "./flow-pins.js";
 export * from "./flow-versions.js";
 export * from "./flow-version-gc.js";
+export * from "./execution-gc.js";
 export * as schema from "./schema.js";

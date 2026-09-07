@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import { putBlob } from "./blobs.js";
 import type { Db } from "./db.js";
-import { branches, executions, responses, runEvents, steps } from "./schema.js";
+import { branches, executions, flowVersions, responses, runEvents, steps } from "./schema.js";
 
 export interface StartedExecution {
   executionId: string;
@@ -174,6 +174,39 @@ export interface ExecutionRow {
 
 export function getExecution(db: Db, executionId: string): ExecutionRow | undefined {
   return db.select().from(executions).where(eq(executions.id, executionId)).get();
+}
+
+/** This flow's executions, newest first — the seed `execution-gc.ts`'s `gcExecutions` iterates,
+ *  via a join through `flow_versions` (an execution has no direct `flow_id` column). Exported
+ *  rather than kept private: the natural seed for a future execution-history view too. */
+export function listExecutionsForFlow(db: Db, flowId: string): ExecutionRow[] {
+  return db
+    .select({
+      id: executions.id,
+      flowVersionId: executions.flowVersionId,
+      status: executions.status,
+      mode: executions.mode,
+      startedAt: executions.startedAt,
+      endedAt: executions.endedAt,
+      errorJson: executions.errorJson,
+    })
+    .from(executions)
+    .innerJoin(flowVersions, eq(executions.flowVersionId, flowVersions.id))
+    .where(eq(flowVersions.flowId, flowId))
+    .orderBy(desc(executions.startedAt))
+    .all();
+}
+
+/** The flow a given execution belongs to, via `executions.flowVersionId -> flow_versions.flowId`
+ *  — an execution has no direct `flow_id` column of its own. */
+export function flowIdForExecution(db: Db, executionId: string): string | undefined {
+  const row = db
+    .select({ flowId: flowVersions.flowId })
+    .from(executions)
+    .innerJoin(flowVersions, eq(executions.flowVersionId, flowVersions.id))
+    .where(eq(executions.id, executionId))
+    .get();
+  return row?.flowId;
 }
 
 export interface ResponseLogRow {
