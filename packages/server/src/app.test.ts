@@ -122,6 +122,57 @@ describe("flow API", () => {
   });
 });
 
+describe("paste-to-import", () => {
+  const TEXT = `flow "Imported Flow" {
+  node a: prompt @(0, 0) {
+    template = "hi"
+    providerId = "mock"
+    modelId = "m"
+  }
+}
+`;
+
+  it("creates a new flow from pasted DSL text", async () => {
+    const res = await app.inject({ method: "POST", url: "/api/flows/import", payload: { text: TEXT } });
+    expect(res.statusCode).toBe(201);
+    const flow = res.json();
+    expect(flow.name).toBe("Imported Flow");
+    expect(flow.graph.nodes).toHaveLength(1);
+    expect(await readFile(join(flowsDir, `${flow.id}.flow`), "utf8")).toBe(TEXT);
+  });
+
+  it("re-importing the same name saves a new version of the same flow, not a duplicate", async () => {
+    const first = (await app.inject({ method: "POST", url: "/api/flows/import", payload: { text: TEXT } })).json();
+    const editedText = TEXT.replace('template = "hi"', 'template = "hi again"');
+    const res = await app.inject({ method: "POST", url: "/api/flows/import", payload: { text: editedText } });
+    expect(res.statusCode).toBe(200);
+    const second = res.json();
+    expect(second.id).toBe(first.id);
+    expect(second.version).toBe(first.version + 1);
+
+    const all = (await app.inject({ method: "GET", url: "/api/flows" })).json();
+    expect(all).toHaveLength(1);
+  });
+
+  it("rejects unparseable text", async () => {
+    const res = await app.inject({ method: "POST", url: "/api/flows/import", payload: { text: "flow ??? {" } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects text that parses but fails graph validation", async () => {
+    const invalid = `flow "Bad" {
+  node a: prompt @(0, 0) {
+    template = "{{input}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+}
+`;
+    const res = await app.inject({ method: "POST", url: "/api/flows/import", payload: { text: invalid } });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 async function createTwoNodeFlow(): Promise<string> {
   const created = (await app.inject({ method: "POST", url: "/api/flows", payload: { name: "Chain" } })).json();
   const graph = {

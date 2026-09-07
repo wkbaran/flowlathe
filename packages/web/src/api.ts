@@ -10,6 +10,9 @@ export interface FlowSummary {
 export interface FlowWithGraph extends FlowSummary {
   version: number;
   graph: FlowGraph;
+  /** Null for a version saved without DSL text (shouldn't happen for anything saved through this
+   *  API, but a pre-S3 row can still be latest). Sent back as `saveFlowGraph`'s `ifMatch`. */
+  contentHash: string | null;
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -36,12 +39,44 @@ export function getFlow(id: string): Promise<FlowWithGraph> {
   return fetch(`/api/flows/${id}`).then((res) => json(res));
 }
 
-export function saveFlowGraph(id: string, graph: FlowGraph): Promise<FlowWithGraph> {
-  return fetch(`/api/flows/${id}`, {
+export type SaveFlowResult = { ok: true; flow: FlowWithGraph } | { ok: false; conflictText: string };
+
+/** `ifMatch` is the content hash of the version this canvas last loaded — omit it to save
+ *  unconditionally (last-write-wins, pre-S3 behavior). A 409 means the file changed on disk
+ *  since; the caller gets the current on-disk text back to show the user instead of a thrown
+ *  error, since "the file changed externally" is an expected, recoverable outcome, not a bug. */
+export async function saveFlowGraph(id: string, graph: FlowGraph, ifMatch?: string): Promise<SaveFlowResult> {
+  const res = await fetch(`/api/flows/${id}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ graph }),
+    body: JSON.stringify({ graph, ifMatch }),
+  });
+  if (res.status === 409) {
+    const body = (await res.json()) as { currentText: string };
+    return { ok: false, conflictText: body.currentText };
+  }
+  return { ok: true, flow: await json<FlowWithGraph>(res) };
+}
+
+/** Paste-to-import (PLAN-FLOW-DSL.md S4): creates a new flow, or saves a new version of an
+ *  existing one whose `flow "name" { ... }` header matches — see routes/flows.ts. */
+export function importFlowText(text: string): Promise<FlowWithGraph> {
+  return fetch("/api/flows/import", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
   }).then((res) => json(res));
+}
+
+/** `/api/flows/events` SSE: fires whenever any flow's `.flow` file changes on disk (the file
+ *  watcher, or another save). Returns an unsubscribe function. */
+export function subscribeFlowInvalidations(onInvalidated: (slug: string) => void): () => void {
+  const source = new EventSource("/api/flows/events");
+  source.addEventListener("invalidated", (raw: MessageEvent<string>) => {
+    const event = JSON.parse(raw.data) as { slug: string };
+    onInvalidated(event.slug);
+  });
+  return () => source.close();
 }
 
 export function runFlow(id: string): Promise<{ executionId: string; branchId: string }> {

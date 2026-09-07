@@ -680,6 +680,9 @@ importers:
       '@flowlathe/core':
         specifier: workspace:*
         version: link:../core
+      '@flowlathe/dsl':
+        specifier: workspace:*
+        version: link:../dsl
       '@mui/material':
         specifier: 9.4.0
         version: 9.4.0(@emotion/react@11.14.0(@types/react@18.3.31)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@18.3.31)(react@18.3.1))(@types/react@18.3.31)(react@18.3.1))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

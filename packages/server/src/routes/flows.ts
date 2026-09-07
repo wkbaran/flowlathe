@@ -13,6 +13,7 @@ import {
   type Scheduler,
   type ToolRegistration,
 } from "@flowlathe/core";
+import { DslError, parse } from "@flowlathe/dsl";
 import { registry } from "@flowlathe/interpreter";
 import { contentHashOf, createFlow, getFlow, listFlows, listProviders, saveFlowVersion } from "@flowlathe/persistence";
 import type { Db } from "@flowlathe/persistence";
@@ -26,6 +27,7 @@ import { startStepExecution } from "../stepper.js";
 
 const CreateFlowBody = z.object({ name: z.string().min(1) });
 const SaveFlowBody = z.object({ graph: z.unknown(), ifMatch: z.string().optional() });
+const ImportFlowBody = z.object({ text: z.string().min(1) });
 
 export interface FlowRouteDeps {
   db: Db;
@@ -62,6 +64,42 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
     const graph = emptyFlowGraph();
     const text = canonicalTextFor(parsed.data.name, graph);
     const flow = createFlow(db, parsed.data.name, graph, { sourceText: text });
+    mkdirSync(flowsDir, { recursive: true });
+    writeFileSync(join(flowsDir, `${flow.id}.flow`), text);
+    flowsHub.publish({ slug: flow.id });
+    return reply.code(201).send(flow);
+  });
+
+  /** Paste-to-import (PLAN-FLOW-DSL.md S4): a flow whose `flow "name" { ... }` header matches an
+   *  existing flow's name is treated as a new version of it (same rationale as `flowlathe flows
+   *  import`'s CLI counterpart); otherwise a new flow is created, with an id freshly slugified
+   *  from the name — never the id of the flow the text was pasted from, since two independently
+   *  slugified names can coincide only by writing the same name, which is exactly the "same flow"
+   *  case being handled here already. */
+  app.post("/api/flows/import", async (request, reply) => {
+    const parsed = ImportFlowBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.message });
+    }
+    let name: string;
+    let graph: FlowGraph;
+    try {
+      ({ name, graph } = parse(parsed.data.text));
+    } catch (err) {
+      const message = err instanceof DslError ? err.message : (err as Error).message;
+      return reply.code(400).send({ error: message });
+    }
+    const problems = validateGraph(graph, { portsOf });
+    if (problems.length > 0) {
+      return reply.code(400).send({ error: `invalid flow graph: ${problems.join("; ")}` });
+    }
+
+    const existing = listFlows(db).find((f) => f.name === name);
+    if (existing) {
+      return reply.code(200).send(persistAndSync(existing.id, name, graph));
+    }
+    const text = canonicalTextFor(name, graph);
+    const flow = createFlow(db, name, graph, { sourceText: text });
     mkdirSync(flowsDir, { recursive: true });
     writeFileSync(join(flowsDir, `${flow.id}.flow`), text);
     flowsHub.publish({ slug: flow.id });

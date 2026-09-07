@@ -16,6 +16,10 @@ export interface FlowWithGraph extends FlowSummary {
   flowVersionId: string;
   version: number;
   graph: FlowGraph;
+  /** This version's content hash — null for one saved without `sourceText` (pre-S3, or a DB-only
+   *  save). The canvas sends this back as `PUT /api/flows/:id`'s `ifMatch` to detect a conflicting
+   *  external edit; see routes/flows.ts. */
+  contentHash: string | null;
 }
 
 export interface FlowVersionRow {
@@ -48,19 +52,13 @@ export function createFlow(db: Db, name: string, graph: FlowGraph, opts?: { id?:
   const version = 1;
   const flowVersionId = randomUUID();
   const sourceText = opts?.sourceText;
+  const contentHash = sourceText !== undefined ? contentHashOf(sourceText) : null;
   db.insert(flowVersions)
-    .values({
-      id: flowVersionId,
-      flowId: id,
-      version,
-      graphJson: graph,
-      sourceText: sourceText ?? null,
-      contentHash: sourceText !== undefined ? contentHashOf(sourceText) : null,
-    })
+    .values({ id: flowVersionId, flowId: id, version, graphJson: graph, sourceText: sourceText ?? null, contentHash })
     .run();
   saveStateDecls(db, flowVersionId, graph.state);
   const row = mustGetFlowRow(db, id);
-  return { ...row, flowVersionId, version, graph };
+  return { ...row, flowVersionId, version, graph, contentHash };
 }
 
 export function listFlows(db: Db): FlowSummary[] {
@@ -81,7 +79,7 @@ export function getFlow(db: Db, id: string): FlowWithGraph | undefined {
     .orderBy(desc(flowVersions.version))
     .get();
   if (!latest) return undefined;
-  return { ...flow, flowVersionId: latest.id, version: latest.version, graph: latest.graphJson };
+  return { ...flow, flowVersionId: latest.id, version: latest.version, graph: latest.graphJson, contentHash: latest.contentHash };
 }
 
 /** Returns the *exact* pinned version's graph — never the flow's latest. A trigger runs a
@@ -146,7 +144,7 @@ export function saveFlowVersion(db: Db, flowId: string, graph: FlowGraph, source
       .where(and(eq(flowVersions.flowId, flowId), eq(flowVersions.contentHash, contentHash)))
       .get();
     if (existing) {
-      return { ...flow, flowVersionId: existing.id, version: existing.version, graph: existing.graphJson };
+      return { ...flow, flowVersionId: existing.id, version: existing.version, graph: existing.graphJson, contentHash: existing.contentHash };
     }
   }
 
@@ -174,7 +172,7 @@ export function saveFlowVersion(db: Db, flowId: string, graph: FlowGraph, source
     .where(eq(flows.id, flowId))
     .run();
   const row = mustGetFlowRow(db, flowId);
-  return { ...row, flowVersionId, version, graph };
+  return { ...row, flowVersionId, version, graph, contentHash: contentHash ?? null };
 }
 
 /** Renames a flow's display name without touching its id/slug or creating a new version — the

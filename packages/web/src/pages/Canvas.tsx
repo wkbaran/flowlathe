@@ -1,5 +1,6 @@
 import type { FlowEdge, FlowNode, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
 import { checkUrlSafety, extractTemplateVars, validateGraph } from "@flowlathe/core";
+import { DslError, format, parse, print } from "@flowlathe/dsl";
 import {
   Alert,
   AppBar,
@@ -7,7 +8,9 @@ import {
   Button,
   Checkbox,
   Dialog,
+  DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   Divider,
   FormControlLabel,
@@ -18,6 +21,7 @@ import {
   MenuItem,
   Paper,
   Select,
+  Snackbar,
   TextField,
   Toolbar,
   Typography,
@@ -53,6 +57,7 @@ import {
   stepBack,
   stepOnce,
   stepStart,
+  subscribeFlowInvalidations,
   type BranchRecord,
   type ModelRecord,
   type PluginStatusEntry,
@@ -201,16 +206,48 @@ export function Canvas() {
   const [stateLineage, setStateLineage] = useState<StateLineageEdge[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  useEffect(() => {
-    if (!flowId) return;
-    getFlow(flowId).then((flow) => {
+  // PLAN-FLOW-DSL.md S4: live DSL text view, save conflicts, external-change reload, node rename.
+  const [contentHash, setContentHash] = useState<string | null>(null);
+  const [textView, setTextView] = useState(false);
+  const [dslDraft, setDslDraft] = useState("");
+  const [dslError, setDslError] = useState<string | null>(null);
+  const [conflictText, setConflictText] = useState<string | null>(null);
+  const [externalChangeNotice, setExternalChangeNotice] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  function loadFlow(id: string) {
+    return getFlow(id).then((flow) => {
       setName(flow.name);
       setVersion(flow.version);
       setNodes(flow.graph.nodes as Node[]);
       setEdges(flow.graph.edges as Edge[]);
       setStateDecls(flow.graph.state ?? []);
+      setContentHash(flow.contentHash);
+      setExternalChangeNotice(false);
+      return flow;
     });
+  }
+
+  useEffect(() => {
+    if (!flowId) return;
+    void loadFlow(flowId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowId, setNodes, setEdges]);
+
+  // External-change reload prompt (§4.1): a `.flow` file changing on disk — an editor, `git
+  // checkout`, `flowlathe fmt` — broadcasts here. Re-fetching and comparing hashes (rather than
+  // trusting every event blindly) is what keeps this from firing on the canvas's OWN save, which
+  // publishes to the exact same topic.
+  useEffect(() => {
+    if (!flowId) return;
+    return subscribeFlowInvalidations((slug) => {
+      if (slug !== flowId) return;
+      getFlow(flowId).then((flow) => {
+        if (flow.contentHash !== contentHash) setExternalChangeNotice(true);
+      });
+    });
+  }, [flowId, contentHash]);
 
   useEffect(() => {
     listProviders().then(async (list) => {
@@ -222,6 +259,11 @@ export function Canvas() {
   }, []);
 
   useEffect(() => () => eventSourceRef.current?.close(), []);
+
+  useEffect(() => {
+    setRenameDraft(selectedNodeId ?? "");
+    setRenameError(null);
+  }, [selectedNodeId]);
 
   const onConnect = useCallback(
     (connection: Connection) =>
@@ -274,6 +316,72 @@ export function Canvas() {
     });
   }
 
+  /** Renaming a node is a rename of its id — PLAN-FLOW-DSL.md §3.4: the DSL's name-as-id choice
+   *  means past executions keep referring to it by the old id (`steps.node_id`, snapshot
+   *  payloads, `state_writes` provenance are never rewritten), which is why this is a distinct,
+   *  warned-about action rather than just another editable property. Node ids stay stable across
+   *  every OTHER edit (CLAUDE.md's step-mode note depends on that), so this is the one place that
+   *  invariant is deliberately broken, on purpose, with the user's explicit action. */
+  function renameSelectedNode() {
+    if (!selectedNodeId) return;
+    const next = renameDraft.trim();
+    if (next === selectedNodeId) {
+      setRenameError(null);
+      return;
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(next)) {
+      setRenameError("must start with a letter or underscore, then letters/digits/underscore/hyphen only");
+      return;
+    }
+    if (nodes.some((n) => n.id === next)) {
+      setRenameError(`"${next}" is already used by another node in this flow`);
+      return;
+    }
+    const oldId = selectedNodeId;
+    setNodes((ns) =>
+      ns.map((n) => {
+        if (n.id === oldId) return { ...n, id: next };
+        if (n.parentId === oldId) return { ...n, parentId: next };
+        return n;
+      }),
+    );
+    setEdges((es) =>
+      es.map((e) => ({
+        ...e,
+        source: e.source === oldId ? next : e.source,
+        target: e.target === oldId ? next : e.target,
+      })),
+    );
+    setSelectedNodeId(next);
+    setRenameError(null);
+  }
+
+  function openTextView() {
+    setDslDraft(
+      print({ name, graph: { nodes: nodes as FlowNode[], edges: edges as FlowEdge[], state: stateDecls }, comments: {} }),
+    );
+    setDslError(null);
+    setTextView(true);
+  }
+
+  /** "parse-on-blur" (§7 S4): a syntax error leaves the graph untouched and just shows the
+   *  message — never partially applies a broken edit. A successful parse also reformats the
+   *  draft to its canonical form, so what's shown always matches what `Save` would write to
+   *  disk. */
+  function handleDslBlur() {
+    try {
+      const parsed = parse(dslDraft);
+      setName(parsed.name);
+      setNodes(parsed.graph.nodes as Node[]);
+      setEdges(parsed.graph.edges as Edge[]);
+      setStateDecls(parsed.graph.state);
+      setDslDraft(format(dslDraft));
+      setDslError(null);
+    } catch (err) {
+      setDslError(err instanceof DslError ? err.message : (err as Error).message);
+    }
+  }
+
   function addStateDecl() {
     setStateDecls((prev) => [...prev, { name: `entry${prev.length + 1}`, type: "string", merge: "replace" }]);
   }
@@ -286,19 +394,40 @@ export function Canvas() {
     setStateDecls((prev) => prev.filter((_, i) => i !== index));
   }
 
-  async function handleSave() {
-    if (!flowId) return;
+  /** Returns whether the save actually went through — false on an ifMatch conflict, which shows
+   *  `conflictText` instead of throwing (a conflicting external edit is an expected outcome, not
+   *  an error the caller should have to catch). `handleRun`/`handleStep` check this and bail
+   *  rather than run against a graph the server never actually saved. */
+  async function handleSave(): Promise<boolean> {
+    if (!flowId) return false;
     setSaving(true);
     try {
-      const saved = await saveFlowGraph(flowId, {
-        nodes: nodes as FlowNode[],
-        edges: edges as FlowEdge[],
-        state: stateDecls,
-      });
-      setVersion(saved.version);
+      const result = await saveFlowGraph(
+        flowId,
+        { nodes: nodes as FlowNode[], edges: edges as FlowEdge[], state: stateDecls },
+        contentHash ?? undefined,
+      );
+      if (!result.ok) {
+        setConflictText(result.conflictText);
+        return false;
+      }
+      setVersion(result.flow.version);
+      setContentHash(result.flow.contentHash);
+      return true;
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleOverwriteConflict() {
+    setConflictText(null);
+    setContentHash(null); // clears ifMatch, so the retry below always wins
+    void handleSave();
+  }
+
+  function handleReloadFromDisk() {
+    setConflictText(null);
+    if (flowId) void loadFlow(flowId);
   }
 
   function refreshState(execId: string, branchId: string) {
@@ -372,7 +501,7 @@ export function Canvas() {
     setStateValues({});
     setStateLineage([]);
     try {
-      await handleSave();
+      if (!(await handleSave())) return;
       const { executionId: newExecutionId, branchId } = await runFlow(flowId);
       setExecutionId(newExecutionId);
       subscribeToExecution(newExecutionId, branchId);
@@ -385,7 +514,7 @@ export function Canvas() {
     if (!flowId) return;
     try {
       if (!stepSession) {
-        await handleSave();
+        if (!(await handleSave())) return;
         setLog([]);
         setNodeStatus({});
         setSuspended([]);
@@ -534,6 +663,14 @@ export function Canvas() {
           <Button variant="outlined" color="inherit" onClick={handleExport}>
             Export
           </Button>
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={() => (textView ? setTextView(false) : openTextView())}
+            data-testid="toggle-text-view"
+          >
+            {textView ? "Graph" : "Text"}
+          </Button>
         </Toolbar>
       </AppBar>
       {graphProblems.length > 0 && (
@@ -547,6 +684,41 @@ export function Canvas() {
           <Link href="/providers">Providers</Link> before running.
         </Alert>
       )}
+      <Snackbar
+        open={externalChangeNotice}
+        message="This flow changed on disk"
+        action={
+          <Button color="inherit" size="small" onClick={() => flowId && void loadFlow(flowId)} data-testid="reload-flow-button">
+            Reload
+          </Button>
+        }
+      />
+      <Dialog open={conflictText !== null} onClose={() => setConflictText(null)}>
+        <DialogTitle>Flow changed on disk</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This flow's file was edited outside the canvas since it was loaded. Reload to see the current version, or
+            overwrite it with what's open here.
+          </DialogContentText>
+          <TextField
+            fullWidth
+            multiline
+            minRows={4}
+            maxRows={12}
+            value={conflictText ?? ""}
+            slotProps={{ htmlInput: { readOnly: true, "aria-label": "Current file contents" } }}
+            sx={{ mt: 2, fontFamily: "monospace" }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleReloadFromDisk} data-testid="conflict-reload">
+            Reload from disk
+          </Button>
+          <Button color="warning" onClick={handleOverwriteConflict} data-testid="conflict-overwrite">
+            Overwrite anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
       {theme.palette.mode === "dark" && (
         <style>{`
           .react-flow__controls-button {
@@ -560,26 +732,72 @@ export function Canvas() {
         `}</style>
       )}
       <div style={{ flexGrow: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ flexGrow: 1 }}>
-          <ReactFlow
-            nodes={decoratedNodes}
-            edges={decoratedEdges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onSelectionChange={({ nodes: selected }) => setSelectedNodeId(selected[0]?.id ?? null)}
-            fitView
-          >
-            <Background bgColor={theme.palette.background.default} color={theme.palette.divider} />
-            <Controls />
-          </ReactFlow>
-        </div>
+        {textView ? (
+          <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column", p: 2, gap: 1, minWidth: 0 }} data-testid="dsl-text-view">
+            <Typography variant="caption" color="text.secondary">
+              Live DSL for this flow — edits apply on blur. Reformats to canonical form on a successful parse.
+            </Typography>
+            <TextField
+              multiline
+              fullWidth
+              value={dslDraft}
+              onChange={(e) => setDslDraft(e.target.value)}
+              onBlur={handleDslBlur}
+              slotProps={{
+                htmlInput: { "aria-label": "Flow DSL text", spellCheck: false },
+                input: { sx: { height: "100%", alignItems: "flex-start" } },
+              }}
+              sx={{ flexGrow: 1, fontFamily: "monospace", "& textarea": { fontFamily: "monospace", height: "100% !important" } }}
+            />
+            {dslError && (
+              <Alert severity="error" data-testid="dsl-parse-error">
+                {dslError}
+              </Alert>
+            )}
+          </Box>
+        ) : (
+          <div style={{ flexGrow: 1 }}>
+            <ReactFlow
+              nodes={decoratedNodes}
+              edges={decoratedEdges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onSelectionChange={({ nodes: selected }) => setSelectedNodeId(selected[0]?.id ?? null)}
+              fitView
+            >
+              <Background bgColor={theme.palette.background.default} color={theme.palette.divider} />
+              <Controls />
+            </ReactFlow>
+          </div>
+        )}
         <Box sx={{ width: 340, borderLeft: 1, borderColor: "divider", display: "flex", flexDirection: "column" }}>
           <Box sx={{ p: 2 }}>
             <Typography variant="subtitle2">Node properties</Typography>
             {selectedNode ? (
               <Box key={selectedNode.id} sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
+                <Box sx={{ display: "flex", gap: 0.5, alignItems: "flex-start" }}>
+                  <TextField
+                    size="small"
+                    label="Node ID"
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    slotProps={{ htmlInput: { "aria-label": "Node ID" } }}
+                  />
+                  <Button size="small" onClick={renameSelectedNode} disabled={renameDraft.trim() === selectedNode.id}>
+                    Rename
+                  </Button>
+                </Box>
+                {renameError ? (
+                  <Typography variant="caption" color="error">
+                    {renameError}
+                  </Typography>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">
+                    Renaming changes the node's id — past executions will keep referring to it by "{selectedNode.id}".
+                  </Typography>
+                )}
                 <NodeProperties
                   node={selectedNode}
                   providers={providers}
