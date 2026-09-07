@@ -9,7 +9,6 @@ export const blobs = sqliteTable("blobs", {
   bytes: blob("bytes", { mode: "buffer" }).notNull(),
   byteLen: integer("byte_len").notNull(),
   encoding: text("encoding").notNull(),
-  refcount: integer("refcount").notNull().default(0),
 });
 
 export const flows = sqliteTable("flows", {
@@ -74,7 +73,7 @@ export const flowPins = sqliteTable(
       .references(() => flowVersions.id),
     updatedAt: text("updated_at").notNull().default(nowIso()),
   },
-  (t) => [primaryKey({ columns: [t.flowId, t.channel] })],
+  (t) => [primaryKey({ columns: [t.flowId, t.channel] }), index("flow_pins_flow_version_idx").on(t.flowVersionId)],
 );
 
 export const providers = sqliteTable("providers", {
@@ -100,31 +99,39 @@ export const models = sqliteTable("models", {
   defaultsJson: text("defaults_json", { mode: "json" }),
 });
 
-export const executions = sqliteTable("executions", {
-  id: text("id").primaryKey(),
-  flowVersionId: text("flow_version_id")
-    .notNull()
-    .references(() => flowVersions.id),
-  status: text("status")
-    .notNull()
-    .$type<"running" | "awaiting_input" | "finished" | "failed" | "cancelled">(),
-  mode: text("mode").notNull().$type<"run" | "step">(),
-  rootBranchId: text("root_branch_id"),
-  startedAt: text("started_at").notNull().default(nowIso()),
-  endedAt: text("ended_at"),
-  errorJson: text("error_json", { mode: "json" }),
-});
+export const executions = sqliteTable(
+  "executions",
+  {
+    id: text("id").primaryKey(),
+    flowVersionId: text("flow_version_id")
+      .notNull()
+      .references(() => flowVersions.id),
+    status: text("status")
+      .notNull()
+      .$type<"running" | "awaiting_input" | "finished" | "failed" | "cancelled">(),
+    mode: text("mode").notNull().$type<"run" | "step">(),
+    rootBranchId: text("root_branch_id"),
+    startedAt: text("started_at").notNull().default(nowIso()),
+    endedAt: text("ended_at"),
+    errorJson: text("error_json", { mode: "json" }),
+  },
+  (t) => [index("executions_flow_version_idx").on(t.flowVersionId)],
+);
 
-export const branches = sqliteTable("branches", {
-  id: text("id").primaryKey(),
-  executionId: text("execution_id")
-    .notNull()
-    .references(() => executions.id),
-  parentBranchId: text("parent_branch_id"),
-  forkedFromSnapshotId: text("forked_from_snapshot_id"),
-  label: text("label"),
-  createdAt: text("created_at").notNull().default(nowIso()),
-});
+export const branches = sqliteTable(
+  "branches",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => executions.id),
+    parentBranchId: text("parent_branch_id"),
+    forkedFromSnapshotId: text("forked_from_snapshot_id"),
+    label: text("label"),
+    createdAt: text("created_at").notNull().default(nowIso()),
+  },
+  (t) => [index("branches_execution_idx").on(t.executionId)],
+);
 
 export const steps = sqliteTable(
   "steps",
@@ -162,28 +169,36 @@ export const snapshots = sqliteTable(
   (t) => [index("snapshots_branch_idx").on(t.branchId, t.stepIndex)],
 );
 
-export const messages = sqliteTable("messages", {
-  id: text("id").primaryKey(),
-  role: text("role")
-    .notNull()
-    .$type<"system" | "user" | "assistant" | "thinking" | "tool">(),
-  contentSha: text("content_sha")
-    .notNull()
-    .references(() => blobs.sha256),
-  tokenCount: integer("token_count"),
-  metaJson: text("meta_json", { mode: "json" }),
-});
+export const messages = sqliteTable(
+  "messages",
+  {
+    id: text("id").primaryKey(),
+    role: text("role")
+      .notNull()
+      .$type<"system" | "user" | "assistant" | "thinking" | "tool">(),
+    contentSha: text("content_sha")
+      .notNull()
+      .references(() => blobs.sha256),
+    tokenCount: integer("token_count"),
+    metaJson: text("meta_json", { mode: "json" }),
+  },
+  (t) => [index("messages_content_sha_idx").on(t.contentSha)],
+);
 
-export const contexts = sqliteTable("contexts", {
-  id: text("id").primaryKey(),
-  executionId: text("execution_id")
-    .notNull()
-    .references(() => executions.id),
-  parentContextId: text("parent_context_id"),
-  transformCallId: text("transform_call_id"),
-  messageCount: integer("message_count").notNull().default(0),
-  createdAt: text("created_at").notNull().default(nowIso()),
-});
+export const contexts = sqliteTable(
+  "contexts",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => executions.id),
+    parentContextId: text("parent_context_id"),
+    transformCallId: text("transform_call_id"),
+    messageCount: integer("message_count").notNull().default(0),
+    createdAt: text("created_at").notNull().default(nowIso()),
+  },
+  (t) => [index("contexts_execution_idx").on(t.executionId)],
+);
 
 export const contextMessages = sqliteTable(
   "context_messages",
@@ -196,61 +211,84 @@ export const contextMessages = sqliteTable(
       .notNull()
       .references(() => messages.id),
   },
-  (t) => [primaryKey({ columns: [t.contextId, t.ord] })],
+  (t) => [primaryKey({ columns: [t.contextId, t.ord] }), index("context_messages_message_idx").on(t.messageId)],
 );
 
-export const contextTransformCalls = sqliteTable("context_transform_calls", {
-  id: text("id").primaryKey(),
-  sourceContextId: text("source_context_id")
-    .notNull()
-    .references(() => contexts.id),
-  resultContextId: text("result_context_id")
-    .notNull()
-    .references(() => contexts.id),
-  transformKind: text("transform_kind").notNull(),
-  paramsJson: text("params_json", { mode: "json" }),
-  modelId: text("model_id").references(() => models.id),
-  responseId: text("response_id"),
-  createdAt: text("created_at").notNull().default(nowIso()),
-});
+export const contextTransformCalls = sqliteTable(
+  "context_transform_calls",
+  {
+    id: text("id").primaryKey(),
+    sourceContextId: text("source_context_id")
+      .notNull()
+      .references(() => contexts.id),
+    resultContextId: text("result_context_id")
+      .notNull()
+      .references(() => contexts.id),
+    transformKind: text("transform_kind").notNull(),
+    paramsJson: text("params_json", { mode: "json" }),
+    modelId: text("model_id").references(() => models.id),
+    responseId: text("response_id"),
+    createdAt: text("created_at").notNull().default(nowIso()),
+  },
+  (t) => [
+    index("context_transform_calls_source_idx").on(t.sourceContextId),
+    index("context_transform_calls_result_idx").on(t.resultContextId),
+  ],
+);
 
-export const responses = sqliteTable("responses", {
-  id: text("id").primaryKey(),
-  executionId: text("execution_id")
-    .notNull()
-    .references(() => executions.id),
-  branchId: text("branch_id")
-    .notNull()
-    .references(() => branches.id),
-  stepId: text("step_id").references(() => steps.id),
-  nodeId: text("node_id").notNull(),
-  modelId: text("model_id").references(() => models.id),
-  requestContextId: text("request_context_id").references(() => contexts.id),
-  renderedPromptSha: text("rendered_prompt_sha").references(() => blobs.sha256),
-  thinkingSha: text("thinking_sha").references(() => blobs.sha256),
-  contentSha: text("content_sha").references(() => blobs.sha256),
-  structuredJson: text("structured_json", { mode: "json" }),
-  finishReason: text("finish_reason"),
-  promptTokens: integer("prompt_tokens"),
-  completionTokens: integer("completion_tokens"),
-  latencyMs: integer("latency_ms"),
-  queueWaitMs: integer("queue_wait_ms"),
-  createdAt: text("created_at").notNull().default(nowIso()),
-  errorJson: text("error_json", { mode: "json" }),
-});
+export const responses = sqliteTable(
+  "responses",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => executions.id),
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => branches.id),
+    stepId: text("step_id").references(() => steps.id),
+    nodeId: text("node_id").notNull(),
+    modelId: text("model_id").references(() => models.id),
+    requestContextId: text("request_context_id").references(() => contexts.id),
+    renderedPromptSha: text("rendered_prompt_sha").references(() => blobs.sha256),
+    thinkingSha: text("thinking_sha").references(() => blobs.sha256),
+    contentSha: text("content_sha").references(() => blobs.sha256),
+    structuredJson: text("structured_json", { mode: "json" }),
+    finishReason: text("finish_reason"),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    latencyMs: integer("latency_ms"),
+    queueWaitMs: integer("queue_wait_ms"),
+    createdAt: text("created_at").notNull().default(nowIso()),
+    errorJson: text("error_json", { mode: "json" }),
+  },
+  (t) => [
+    index("responses_execution_idx").on(t.executionId),
+    index("responses_branch_idx").on(t.branchId),
+    index("responses_step_idx").on(t.stepId),
+    index("responses_request_context_idx").on(t.requestContextId),
+    index("responses_rendered_prompt_sha_idx").on(t.renderedPromptSha),
+    index("responses_thinking_sha_idx").on(t.thinkingSha),
+    index("responses_content_sha_idx").on(t.contentSha),
+  ],
+);
 
-export const toolCalls = sqliteTable("tool_calls", {
-  id: text("id").primaryKey(),
-  responseId: text("response_id")
-    .notNull()
-    .references(() => responses.id),
-  toolName: text("tool_name").notNull(),
-  argsJson: text("args_json", { mode: "json" }).notNull(),
-  resultSha: text("result_sha").references(() => blobs.sha256),
-  errorJson: text("error_json", { mode: "json" }),
-  startedAt: text("started_at"),
-  endedAt: text("ended_at"),
-});
+export const toolCalls = sqliteTable(
+  "tool_calls",
+  {
+    id: text("id").primaryKey(),
+    responseId: text("response_id")
+      .notNull()
+      .references(() => responses.id),
+    toolName: text("tool_name").notNull(),
+    argsJson: text("args_json", { mode: "json" }).notNull(),
+    resultSha: text("result_sha").references(() => blobs.sha256),
+    errorJson: text("error_json", { mode: "json" }),
+    startedAt: text("started_at"),
+    endedAt: text("ended_at"),
+  },
+  (t) => [index("tool_calls_result_sha_idx").on(t.resultSha)],
+);
 
 export const stateDecls = sqliteTable(
   "state_decls",
@@ -268,30 +306,42 @@ export const stateDecls = sqliteTable(
   (t) => [primaryKey({ columns: [t.flowVersionId, t.name] })],
 );
 
-export const stateWrites = sqliteTable("state_writes", {
-  id: text("id").primaryKey(),
-  branchId: text("branch_id")
-    .notNull()
-    .references(() => branches.id),
-  stepId: text("step_id").references(() => steps.id),
-  entry: text("entry").notNull(),
-  valueSha: text("value_sha")
-    .notNull()
-    .references(() => blobs.sha256),
-  mergeApplied: text("merge_applied").notNull(),
-  seq: integer("seq").notNull(),
-  createdAt: text("created_at").notNull().default(nowIso()),
-});
+export const stateWrites = sqliteTable(
+  "state_writes",
+  {
+    id: text("id").primaryKey(),
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => branches.id),
+    stepId: text("step_id").references(() => steps.id),
+    entry: text("entry").notNull(),
+    valueSha: text("value_sha")
+      .notNull()
+      .references(() => blobs.sha256),
+    mergeApplied: text("merge_applied").notNull(),
+    seq: integer("seq").notNull(),
+    createdAt: text("created_at").notNull().default(nowIso()),
+  },
+  (t) => [
+    index("state_writes_branch_idx").on(t.branchId),
+    index("state_writes_step_idx").on(t.stepId),
+    index("state_writes_value_sha_idx").on(t.valueSha),
+  ],
+);
 
-export const stateReads = sqliteTable("state_reads", {
-  id: text("id").primaryKey(),
-  branchId: text("branch_id")
-    .notNull()
-    .references(() => branches.id),
-  stepId: text("step_id").references(() => steps.id),
-  entry: text("entry").notNull(),
-  seqSeen: integer("seq_seen").notNull(),
-});
+export const stateReads = sqliteTable(
+  "state_reads",
+  {
+    id: text("id").primaryKey(),
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => branches.id),
+    stepId: text("step_id").references(() => steps.id),
+    entry: text("entry").notNull(),
+    seqSeen: integer("seq_seen").notNull(),
+  },
+  (t) => [index("state_reads_branch_idx").on(t.branchId), index("state_reads_step_idx").on(t.stepId)],
+);
 
 export const runEvents = sqliteTable(
   "run_events",
@@ -306,7 +356,7 @@ export const runEvents = sqliteTable(
     payloadJson: text("payload_json", { mode: "json" }).notNull(),
     at: text("at").notNull().default(nowIso()),
   },
-  (t) => [unique().on(t.executionId, t.seq)],
+  (t) => [unique().on(t.executionId, t.seq), index("run_events_branch_idx").on(t.branchId)],
 );
 
 /** One row per plugin (e.g. "spotify"), holding whatever that plugin needs to authenticate —
@@ -322,19 +372,23 @@ export const pluginCredentials = sqliteTable("plugin_credentials", {
 
 /** A trigger runs a *pinned* flow version, never HEAD — editing a flow on the canvas must not
  *  silently change what a live Discord bot does; re-pinning is an explicit action. */
-export const triggers = sqliteTable("triggers", {
-  id: text("id").primaryKey(),
-  flowId: text("flow_id")
-    .notNull()
-    .references(() => flows.id),
-  flowVersionId: text("flow_version_id")
-    .notNull()
-    .references(() => flowVersions.id),
-  source: text("source").notNull().$type<"discord">(),
-  configJson: text("config_json", { mode: "json" }).notNull(),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  createdAt: text("created_at").notNull().default(nowIso()),
-});
+export const triggers = sqliteTable(
+  "triggers",
+  {
+    id: text("id").primaryKey(),
+    flowId: text("flow_id")
+      .notNull()
+      .references(() => flows.id),
+    flowVersionId: text("flow_version_id")
+      .notNull()
+      .references(() => flowVersions.id),
+    source: text("source").notNull().$type<"discord">(),
+    configJson: text("config_json", { mode: "json" }).notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull().default(nowIso()),
+  },
+  (t) => [index("triggers_flow_version_idx").on(t.flowVersionId)],
+);
 
 /** Provenance ("why did this run?") plus the dedupe mechanism: the `externalId` unique
  *  constraint IS the claim a redelivered Discord message id can't pass twice, surviving a
@@ -355,7 +409,7 @@ export const executionTriggers = sqliteTable(
       .references(() => blobs.sha256),
     at: text("at").notNull().default(nowIso()),
   },
-  (t) => [unique().on(t.externalId)],
+  (t) => [unique().on(t.externalId), index("execution_triggers_payload_sha_idx").on(t.payloadSha)],
 );
 
 /** Per-(trigger, channel) cursor for post-reconnect recovery scans — absent means "never

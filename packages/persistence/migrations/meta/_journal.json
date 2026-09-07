@@ -43,6 +43,13 @@
       "when": 1788754996879,
       "tag": "0005_far_the_santerians",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788813276705,
+      "tag": "0006_noisy_hardball",
+      "breakpoints": true
     }
   ]
 }

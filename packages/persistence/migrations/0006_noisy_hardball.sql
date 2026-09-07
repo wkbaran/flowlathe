@@ -1,0 +1,25 @@
+CREATE INDEX `branches_execution_idx` ON `branches` (`execution_id`);--> statement-breakpoint
+CREATE INDEX `context_messages_message_idx` ON `context_messages` (`message_id`);--> statement-breakpoint
+CREATE INDEX `context_transform_calls_source_idx` ON `context_transform_calls` (`source_context_id`);--> statement-breakpoint
+CREATE INDEX `context_transform_calls_result_idx` ON `context_transform_calls` (`result_context_id`);--> statement-breakpoint
+CREATE INDEX `contexts_execution_idx` ON `contexts` (`execution_id`);--> statement-breakpoint
+CREATE INDEX `execution_triggers_payload_sha_idx` ON `execution_triggers` (`payload_sha`);--> statement-breakpoint
+CREATE INDEX `executions_flow_version_idx` ON `executions` (`flow_version_id`);--> statement-breakpoint
+CREATE INDEX `flow_pins_flow_version_idx` ON `flow_pins` (`flow_version_id`);--> statement-breakpoint
+CREATE INDEX `messages_content_sha_idx` ON `messages` (`content_sha`);--> statement-breakpoint
+CREATE INDEX `responses_execution_idx` ON `responses` (`execution_id`);--> statement-breakpoint
+CREATE INDEX `responses_branch_idx` ON `responses` (`branch_id`);--> statement-breakpoint
+CREATE INDEX `responses_step_idx` ON `responses` (`step_id`);--> statement-breakpoint
+CREATE INDEX `responses_request_context_idx` ON `responses` (`request_context_id`);--> statement-breakpoint
+CREATE INDEX `responses_rendered_prompt_sha_idx` ON `responses` (`rendered_prompt_sha`);--> statement-breakpoint
+CREATE INDEX `responses_thinking_sha_idx` ON `responses` (`thinking_sha`);--> statement-breakpoint
+CREATE INDEX `responses_content_sha_idx` ON `responses` (`content_sha`);--> statement-breakpoint
+CREATE INDEX `run_events_branch_idx` ON `run_events` (`branch_id`);--> statement-breakpoint
+CREATE INDEX `state_reads_branch_idx` ON `state_reads` (`branch_id`);--> statement-breakpoint
+CREATE INDEX `state_reads_step_idx` ON `state_reads` (`step_id`);--> statement-breakpoint
+CREATE INDEX `state_writes_branch_idx` ON `state_writes` (`branch_id`);--> statement-breakpoint
+CREATE INDEX `state_writes_step_idx` ON `state_writes` (`step_id`);--> statement-breakpoint
+CREATE INDEX `state_writes_value_sha_idx` ON `state_writes` (`value_sha`);--> statement-breakpoint
+CREATE INDEX `tool_calls_result_sha_idx` ON `tool_calls` (`result_sha`);--> statement-breakpoint
+CREATE INDEX `triggers_flow_version_idx` ON `triggers` (`flow_version_id`);--> statement-breakpoint
+ALTER TABLE `blobs` DROP COLUMN `refcount`;
