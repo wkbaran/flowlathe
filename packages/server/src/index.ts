@@ -110,7 +110,9 @@ const app = buildApp({
   flowsHub,
 });
 
-app.listen({ port, host: "127.0.0.1" }, (err, address) => {
+const host = process.env["HOST"] ?? "127.0.0.1";
+
+app.listen({ port, host }, (err, address) => {
   if (err) {
     console.error(err);
     process.exit(1);
