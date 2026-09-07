@@ -1,5 +1,5 @@
 {
-  "name": "@flowlathe/testing",
+  "name": "@flowlathe/plugin-firecrawl",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,16 +12,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@flowlathe/compiler": "workspace:*",
     "@flowlathe/core": "workspace:*",
-    "@flowlathe/interpreter": "workspace:*",
-    "@flowlathe/plugin-searxng": "workspace:*",
-    "@flowlathe/providers": "workspace:*",
-    "@flowlathe/runtime": "workspace:*"
+    "@flowlathe/plugin-common": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "22.20.1",
-    "tsx": "4.23.13",
     "typescript": "5.9.3",
     "vitest": "5.0.0"
   }

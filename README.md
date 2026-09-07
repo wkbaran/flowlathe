@@ -127,6 +127,16 @@ applied to every search. Search results are third-party web content passed into 
 context — sanitized for hidden characters and flagged for common prompt-injection phrasing, but
 still worth treating as untrusted when the flow's output reaches somewhere sensitive.
 
+To enable page scraping/crawling, set `FIRECRAWL_API_KEY` — this registers `firecrawl_scrape`,
+`firecrawl_crawl`, and `firecrawl_map` under the `firecrawl` toolset. `FIRECRAWL_BASE_URL` points
+at a self-hosted Firecrawl instance instead of Firecrawl's cloud API. Any URL that reaches these
+tools (from a model's tool arguments, a rendered template, or a link found on a scraped page) is
+checked against a private/internal-network and cloud-metadata-endpoint blocklist before the
+request is made, and again against the post-redirect final URL — see
+`packages/core/src/url-safety.ts`. Set `FLOWLATHE_ALLOW_PRIVATE_URLS=1` only if you deliberately
+want a flow to reach your own intranet; cloud metadata endpoints (`169.254.169.254` and similar)
+are never reachable regardless of this setting.
+
 ## Loop/Map bodies
 
 A Loop/Map body can be an arbitrary multi-node subgraph — any chain, fan-out, or nested

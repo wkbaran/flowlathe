@@ -58,6 +58,18 @@ export interface ToolRegistration {
    *  connected"), or undefined/omitted when it's ready. A toolset with no external dependency
    *  (e.g. the built-in "state" toolset) simply never sets this. */
   unavailableReason?: () => string | undefined;
+  /** How an exported, server-less script can reconstruct this toolset from environment alone.
+   *  Absent ⇒ the toolset is server-only (e.g. Spotify's OAuth tokens or an MCP server's config
+   *  file live in this server's DB/filesystem) and a compiled script using it refuses to run —
+   *  see `@flowlathe/compiler`'s `compileGraph` and PLAN-INTEGRATIONS.md §4.4. */
+  standalone?: {
+    /** Package the emitted script imports, e.g. "@flowlathe/plugin-searxng". */
+    module: string;
+    /** Named export the script calls to rebuild this toolset's registrations from `process.env`. */
+    factory: string;
+    /** Env var names the generated script documents as required — names only, never values. */
+    env: string[];
+  };
 }
 
 export interface MissingToolset {

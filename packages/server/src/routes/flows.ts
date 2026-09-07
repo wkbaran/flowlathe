@@ -109,7 +109,7 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
       const providers: Record<string, ProviderConfig> = Object.fromEntries(
         listProviders(db).map((p) => [p.id, { kind: p.kind, baseUrl: p.baseUrl ?? undefined }]),
       );
-      const script = compileGraph(flow.graph, { providers });
+      const script = compileGraph(flow.graph, { providers, toolsets: pluginToolsets });
       return { script };
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });

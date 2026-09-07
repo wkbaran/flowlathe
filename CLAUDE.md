@@ -536,3 +536,39 @@ rediscover them the hard way.
   `playwright/playwright.config.ts`'s `webServer.env` (the same gap this file already flags as
   *not done* for MCP). Left as a real, tracked gap for whoever picks up e2e coverage for the
   plugin surface generally — not SearXNG-specific.
+- **PLAN-INTEGRATIONS.md Phase B added `packages/core/src/url-safety.ts` and
+  `@flowlathe/plugin-firecrawl`, plus `ToolRegistration.standalone` for exported-script support.**
+  A few things worth knowing:
+  - **The platform `URL` class already closes most of the SSRF-bypass-encoding surface for free.**
+    `new URL("http://2130706433/").hostname` comes back as `"127.0.0.1"` — decimal, octal, hex,
+    and shorthand IPv4 encodings all canonicalize to dotted-decimal during parsing (verified
+    against Node's implementation before writing any bypass-specific detection code). `url-
+    safety.ts`'s private-range check is therefore just plain octet/prefix comparison on
+    `url.hostname` — no need to hand-roll decimal/hex parsing.
+  - **A `::ffff:127.0.0.1`-shaped IPv4-mapped IPv6 address canonicalizes to a *hex* form**
+    (`::ffff:7f00:1`, not the dotted-quad form some other languages produce) — `url-safety.ts`'s
+    `ipv4MappedOctets` matches that hex shape specifically, not the more commonly-documented
+    dotted form.
+  - **`ToolRegistration.standalone` is a data field on each registration**, not a separate
+    lookup table — `compileGraph` (`packages/compiler/src/compile-graph.ts`) partitions
+    `requiredToolsets(graph)` by checking each required toolset's own registrations (passed in as
+    the new `CompileOptions.toolsets`) for a `standalone` descriptor. A toolset with *some*
+    registrations carrying `standalone` and others not would silently use whichever registration
+    happens to match first (`.find()`) — not a real risk today since `createSearxngToolset`/
+    `createFirecrawlToolset` set the identical `standalone` object on every registration they
+    return, but a future plugin should keep that convention (one shared `standalone` object,
+    spread onto every registration) rather than authoring it per-tool.
+  - **The generated script's tool registry construction changed from
+    `createToolRegistry(stateToolset(state))` to `createToolRegistry([...stateToolset(state),
+    ...anyStandaloneFactory()])`** — every hand-authored compiled-script fixture or golden file
+    that pattern-matches on that exact line (none currently do — checked before this change)
+    would need updating if one is added later.
+  - **`FirecrawlClient` has no health-check endpoint to hit for `unavailableReason`**, unlike
+    SearXNG's `/config` — it reuses the same `CachedLivenessProbe` (now generalized into
+    `@flowlathe/plugin-common`, since SearXNG's version was SearXNG-specific until this phase)
+    around a cheap `POST /v2/map` call as a combined reachability *and* auth probe (a bad API key
+    401s the same as an unreachable host would fail differently, but both correctly resolve to
+    "unavailable").
+  - **Firecrawl's crawl-completion polling interval is a constructor option
+    (`crawlPollIntervalMs`, default 1000ms), not hardcoded**, specifically so tests can set it to
+    1ms and exercise multi-poll and timeout paths without a real 1-second-per-iteration wait.

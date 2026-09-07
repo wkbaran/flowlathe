@@ -5,6 +5,7 @@ import type { PluginManifest, ToolRegistration } from "@flowlathe/core";
 import { ensureDefaultMockProvider, getPluginCredential, openDb, runMigrations, setPluginCredential } from "@flowlathe/persistence";
 import { createSpotifyToolset, SpotifyClient, SPOTIFY_MANIFEST, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import { searxngToolsetFromEnv, SEARXNG_MANIFEST } from "@flowlathe/plugin-searxng";
+import { firecrawlToolsetFromEnv, FIRECRAWL_MANIFEST } from "@flowlathe/plugin-firecrawl";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
 import { discoverMcpToolsets, loadMcpServersConfig } from "./mcp-config.js";
@@ -26,7 +27,7 @@ ensureDefaultMockProvider(opened.db);
 const credentialKey = resolveCredentialKey(dataDir);
 const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
 
-const pluginManifests: PluginManifest[] = [SPOTIFY_MANIFEST, SEARXNG_MANIFEST];
+const pluginManifests: PluginManifest[] = [SPOTIFY_MANIFEST, SEARXNG_MANIFEST, FIRECRAWL_MANIFEST];
 
 const spotifyClientId = process.env["SPOTIFY_CLIENT_ID"];
 let spotifyConfig: SpotifyOAuthConfig | undefined;
@@ -45,7 +46,7 @@ if (spotifyClientId) {
   });
   pluginToolsets = createSpotifyToolset(spotifyClient);
 }
-pluginToolsets = [...pluginToolsets, ...searxngToolsetFromEnv()];
+pluginToolsets = [...pluginToolsets, ...searxngToolsetFromEnv(), ...firecrawlToolsetFromEnv()];
 
 /** `MCP_SERVERS_CONFIG_PATH` points at a JSON file in the same `{"mcpServers": {...}}` shape
  *  Claude Desktop/Code use. Discovery is async (each server is connected to once, to list its

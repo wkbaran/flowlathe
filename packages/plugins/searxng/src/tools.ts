@@ -1,7 +1,14 @@
 import type { ToolInvokeMeta, ToolRegistration, ToolSpec } from "@flowlathe/core";
-import { clampLimit, guarded, requireString, sanitizeUntrustedText, toolFail, toolOk } from "@flowlathe/plugin-common";
+import {
+  CachedLivenessProbe,
+  clampLimit,
+  guarded,
+  requireString,
+  sanitizeUntrustedText,
+  toolFail,
+  toolOk,
+} from "@flowlathe/plugin-common";
 import { SearxngClient, type SearxngResult } from "./client.js";
-import { CachedLivenessProbe } from "./liveness.js";
 
 export const SEARXNG_SEARCH_TOOL: ToolSpec = {
   name: "searxng_search",
@@ -66,13 +73,18 @@ function searxngSearchTool(client: SearxngClient): ToolRegistration["handler"] {
 }
 
 export function createSearxngToolset(client: SearxngClient): ToolRegistration[] {
-  const liveness = new CachedLivenessProbe(client);
+  const liveness = new CachedLivenessProbe(() => client.isReachable());
   return [
     {
       toolset: "searxng",
       spec: SEARXNG_SEARCH_TOOL,
       handler: searxngSearchTool(client),
       unavailableReason: () => (liveness.isReachable() ? undefined : `SearXNG at ${client.baseUrl} is not reachable`),
+      standalone: {
+        module: "@flowlathe/plugin-searxng",
+        factory: "searxngToolsetFromEnv",
+        env: ["SEARXNG_BASE_URL", "SEARXNG_ENGINES", "SEARXNG_LANGUAGE", "SEARXNG_SAFESEARCH"],
+      },
     },
   ];
 }

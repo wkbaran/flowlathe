@@ -1,4 +1,11 @@
-import { requiredToolsets, terminalNodeIds, validateGraph, type FlowGraph, type FlowNode } from "@flowlathe/core";
+import {
+  requiredToolsets,
+  terminalNodeIds,
+  validateGraph,
+  type FlowGraph,
+  type FlowNode,
+  type ToolRegistration,
+} from "@flowlathe/core";
 import { emitTable, schemaTable } from "./emit-table.js";
 import { topoLevels } from "./topo-levels.js";
 
@@ -13,6 +20,11 @@ export interface ProviderConfig {
 export interface CompileOptions {
   /** providerId -> how the generated script should construct that provider's adapter. */
   providers: Record<string, ProviderConfig>;
+  /** The server's live plugin tool registrations, used only to look up each required toolset's
+   *  `standalone` descriptor (if any) — see §4.4 of PLAN-INTEGRATIONS.md. Absent/empty means every
+   *  required toolset is treated as server-only, matching the original (pre-`standalone`)
+   *  behavior. */
+  toolsets?: ToolRegistration[] | undefined;
 }
 
 interface IncomingEdge {
@@ -118,7 +130,34 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
   ].filter(Boolean);
 
   const stateDeclsLiteral = JSON.stringify(graph.state);
-  const requiredPluginToolsetsLiteral = JSON.stringify(requiredToolsets(graph));
+
+  // Partition this flow's required plugin toolsets into standalone-capable (the registration
+  // itself says how to rebuild it from env alone — see ToolRegistration.standalone) and
+  // server-only (Spotify's OAuth tokens, an MCP server's config file: nothing a standalone script
+  // could reconstruct). Absent opts.toolsets (or a toolset with no matching registration) treats
+  // every required toolset as server-only, matching this function's original, pre-`standalone`
+  // behavior — see PLAN-INTEGRATIONS.md §4.4.
+  const registrationsByToolset = new Map<string, ToolRegistration[]>();
+  for (const reg of opts.toolsets ?? []) {
+    registrationsByToolset.set(reg.toolset, [...(registrationsByToolset.get(reg.toolset) ?? []), reg]);
+  }
+  const unsupportedToolsets: string[] = [];
+  const standaloneByModuleFactory = new Map<string, { module: string; factory: string; env: string[] }>();
+  for (const toolset of requiredToolsets(graph)) {
+    const standalone = (registrationsByToolset.get(toolset) ?? []).find((r) => r.standalone)?.standalone;
+    if (standalone) {
+      standaloneByModuleFactory.set(`${standalone.module}#${standalone.factory}`, standalone);
+    } else {
+      unsupportedToolsets.push(toolset);
+    }
+  }
+  const standaloneImports = [...standaloneByModuleFactory.values()];
+  const standaloneImportLines = standaloneImports
+    .map((s) => `import { ${s.factory} } from ${JSON.stringify(s.module)};`)
+    .join("\n");
+  const standaloneToolsetCalls = standaloneImports.map((s) => `...${s.factory}()`).join(", ");
+  const standaloneEnvVars = [...new Set(standaloneImports.flatMap((s) => s.env))];
+  const unsupportedToolsetsLiteral = JSON.stringify(unsupportedToolsets);
 
   return `import type { RunEvent } from "@flowlathe/core";
 import {
@@ -132,18 +171,22 @@ import {
   stateToolset,
 } from "@flowlathe/runtime";
 import { SimpleScheduler${adapterImports.length ? `, ${adapterImports.join(", ")}` : ""} } from "@flowlathe/providers";
-
+${standaloneImportLines ? `${standaloneImportLines}\n` : ""}
 const N = {
 ${specEntries}
 } as const;
 
 const STATE_DECLS = ${stateDeclsLiteral};
 
-// Plugin toolsets (e.g. "spotify") aren't supported in exported scripts yet — a compiled script
-// has no server, DB, or credential store to source a plugin's OAuth/config from. A flow using one
-// still exports (the script is a faithful record of the graph), but refuses to run rather than
-// crashing confusingly on a node that expects tools no registry here will ever provide.
-const REQUIRED_PLUGIN_TOOLSETS = ${requiredPluginToolsetsLiteral};
+// Plugin toolsets with no standalone reconstruction (e.g. "spotify": its OAuth tokens live in
+// this server's DB) aren't supported in exported scripts — a compiled script has no server, DB,
+// or credential store to source them from. A flow using one still exports (the script is a
+// faithful record of the graph), but refuses to run rather than crashing confusingly on a node
+// that expects tools no registry here will ever provide. Toolsets with a standalone
+// reconstruction (e.g. SearXNG, Firecrawl — see the imports above, driven entirely by env vars${
+    standaloneEnvVars.length > 0 ? `: ${standaloneEnvVars.join(", ")}` : ""
+  }) are wired into the tool registry below instead.
+const REQUIRED_PLUGIN_TOOLSETS = ${unsupportedToolsetsLiteral};
 
 async function main() {
   if (REQUIRED_PLUGIN_TOOLSETS.length > 0) {
@@ -168,7 +211,7 @@ ${providerEntries}
       state,
       llmConfig: createLlmConfigStore(),
       context: createContextStore(),
-      tools: createToolRegistry(stateToolset(state)),
+      tools: createToolRegistry([...stateToolset(state)${standaloneToolsetCalls ? `, ${standaloneToolsetCalls}` : ""}]),
       ...createSuspendRegistry(),
     },
   });
