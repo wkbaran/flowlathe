@@ -1,12 +1,14 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { backfillContentHashes } from "./backfill.js";
 import { openDb, type OpenedDb } from "./db.js";
 
 const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
 export function runMigrations(opened: OpenedDb): void {
   migrate(opened.db, { migrationsFolder });
+  backfillContentHashes(opened.db);
 }
 
 async function main() {

@@ -63,10 +63,10 @@ async function cmdFlowsImport(argv: string[]): Promise<number> {
     runMigrations(opened);
     const existing = listFlows(opened.db).find((f) => f.name === name);
     if (existing) {
-      const saved = saveFlowVersion(opened.db, existing.id, graph);
+      const saved = saveFlowVersion(opened.db, existing.id, graph, text);
       console.log(`saved "${name}" as version ${saved.version} (flow ${existing.id})`);
     } else {
-      const created = createFlow(opened.db, name, graph);
+      const created = createFlow(opened.db, name, graph, { sourceText: text });
       console.log(`created "${name}" (flow ${created.id})`);
     }
     return 0;

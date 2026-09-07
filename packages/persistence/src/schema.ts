@@ -34,15 +34,47 @@ export const flowVersions = sqliteTable(
      *  old execution's flow viewable *as text* even after the file changed on disk or was
      *  deleted — see PLAN-FLOW-DSL.md §4.2. */
     sourceText: text("source_text"),
-    /** sha256 of `sourceText`, in the same hex form `node:crypto`'s `createHash("sha256")`
-     *  produces. Null exactly when `sourceText` is null. Two SQLite NULLs never collide under a
-     *  UNIQUE constraint, so old rows (both null) can coexist freely; only real, equal hashes
-     *  ever collide — which is the whole point: saving an unchanged flow file creates no new
-     *  row. */
+    /** sha256 of `sourceText` when given, else of `canonicalGraphJson(graph)`
+     *  (PLAN-FLOW-VERSIONING.md §4.1). Deliberately NOT unique (see the index below): dedup
+     *  against it is enforced by `saveFlowVersion`'s own SELECT-before-insert, not by a DB
+     *  constraint — because a restore (`opts.force`) must be able to insert a genuinely new row
+     *  whose content duplicates an old one (§3: "Restore creates a new version"; a restored-to
+     *  graph identical to some old revision is a real, expected case, not a bug). */
     contentHash: text("content_hash"),
+    /** NULL = an unnamed (autosaved, GC-able) revision. Non-null = a named version a human
+     *  labeled — never collected (PLAN-FLOW-VERSIONING.md §3). */
+    label: text("label"),
+    message: text("message"),
+    /** The version this one was saved *from* — usually the immediately preceding version (a
+     *  normal edit-and-save), but NOT always: restoring an old version and continuing from it
+     *  points here at the restored version, not at whatever was HEAD a moment before. This is
+     *  what makes history a tree rather than a flat list. No `.references()` — self-referential,
+     *  same convention as `branches.parentBranchId`/`snapshots.parentSnapshotId` above. */
+    parentVersionId: text("parent_version_id"),
     createdAt: text("created_at").notNull().default(nowIso()),
   },
-  (t) => [unique().on(t.flowId, t.version), unique().on(t.flowId, t.contentHash)],
+  (t) => [unique().on(t.flowId, t.version), index("flow_versions_content_idx").on(t.flowId, t.contentHash)],
+);
+
+/** A named pointer some consumer follows: a trigger, a scheduled run, an exported deployment.
+ *  Points at one revision, changes only by explicit action — never re-resolved to HEAD later
+ *  (PLAN-FLOW-VERSIONING.md §3, §6). Discord triggers currently pin inline via
+ *  `triggers.flowVersionId` rather than through this table (that predates this table and already
+ *  satisfies "never follow HEAD"); this table backs the generic `channel` concept (starting with
+ *  `"default"`) for consumers that don't have their own row to pin from. */
+export const flowPins = sqliteTable(
+  "flow_pins",
+  {
+    flowId: text("flow_id")
+      .notNull()
+      .references(() => flows.id),
+    channel: text("channel").notNull(),
+    flowVersionId: text("flow_version_id")
+      .notNull()
+      .references(() => flowVersions.id),
+    updatedAt: text("updated_at").notNull().default(nowIso()),
+  },
+  (t) => [primaryKey({ columns: [t.flowId, t.channel] })],
 );
 
 export const providers = sqliteTable("providers", {

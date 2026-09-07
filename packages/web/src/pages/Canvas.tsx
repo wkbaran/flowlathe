@@ -1,4 +1,4 @@
-import type { FlowEdge, FlowNode, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
+import type { FlowEdge, FlowNode, GraphDiff, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
 import { checkUrlSafety, extractTemplateVars, validateGraph } from "@flowlathe/core";
 import { DslError, format, parse, print } from "@flowlathe/dsl";
 import {
@@ -46,19 +46,30 @@ import {
   getExecution,
   getExecutionState,
   getFlow,
+  getFlowDiff,
+  getGitDiff,
+  getGitHistory,
   getPluginStatuses,
   getStateLineage,
+  labelFlowVersion,
   listBranches,
+  listFlowPins,
+  listFlowVersions,
   listModels,
   listProviders,
+  restoreFlowVersion,
   resumeExecution,
   runFlow,
   saveFlowGraph,
+  setFlowPin,
   stepBack,
   stepOnce,
   stepStart,
   subscribeFlowInvalidations,
   type BranchRecord,
+  type FlowPin,
+  type FlowVersionSummary,
+  type GitCommitInfo,
   type ModelRecord,
   type PluginStatusEntry,
   type ProviderRecord,
@@ -215,6 +226,24 @@ export function Canvas() {
   const [externalChangeNotice, setExternalChangeNotice] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
+
+  // PLAN-FLOW-VERSIONING.md S3: version history, diff, restore, execution provenance.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [versions, setVersions] = useState<FlowVersionSummary[]>([]);
+  const [pins, setPins] = useState<FlowPin[]>([]);
+  const [gitCommits, setGitCommits] = useState<GitCommitInfo[]>([]);
+  const [gitDiffResult, setGitDiffResult] = useState<{ diff: GraphDiff; isSemanticChange: boolean } | null>(null);
+  const [saveAsVersionOpen, setSaveAsVersionOpen] = useState(false);
+  const [versionLabelDraft, setVersionLabelDraft] = useState("");
+  const [versionMessageDraft, setVersionMessageDraft] = useState("");
+  const [renameVersionId, setRenameVersionId] = useState<string | null>(null);
+  const [diffPick, setDiffPick] = useState<{ from?: string; to?: string }>({});
+  const [diffResult, setDiffResult] = useState<{ diff: GraphDiff; isSemanticChange: boolean } | null>(null);
+  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
+  const [provenance, setProvenance] = useState<{
+    flowVersion?: { id: string; version: number; label: string | null };
+    changedSinceRun?: { semantic: boolean; nodesChanged: number; currentVersionId: string };
+  } | null>(null);
 
   function loadFlow(id: string) {
     return getFlow(id).then((flow) => {
@@ -397,8 +426,9 @@ export function Canvas() {
   /** Returns whether the save actually went through — false on an ifMatch conflict, which shows
    *  `conflictText` instead of throwing (a conflicting external edit is an expected outcome, not
    *  an error the caller should have to catch). `handleRun`/`handleStep` check this and bail
-   *  rather than run against a graph the server never actually saved. */
-  async function handleSave(): Promise<boolean> {
+   *  rather than run against a graph the server never actually saved. `opts.label` names this save
+   *  as a milestone ("Save as version…" — see `handleSaveAsVersion`). */
+  async function handleSave(opts?: { label?: string; message?: string }): Promise<boolean> {
     if (!flowId) return false;
     setSaving(true);
     try {
@@ -406,6 +436,7 @@ export function Canvas() {
         flowId,
         { nodes: nodes as FlowNode[], edges: edges as FlowEdge[], state: stateDecls },
         contentHash ?? undefined,
+        opts,
       );
       if (!result.ok) {
         setConflictText(result.conflictText);
@@ -413,10 +444,67 @@ export function Canvas() {
       }
       setVersion(result.flow.version);
       setContentHash(result.flow.contentHash);
+      // A live run/step session's flow_version_id is pinned at start, but stepping deliberately
+      // keeps following HEAD (CLAUDE.md) — this save is exactly the moment that can drift them
+      // apart, so re-check right here rather than waiting for the next unrelated refresh.
+      if (executionId && activeBranchId) void refreshExecutionProvenance(executionId, activeBranchId);
       return true;
     } finally {
       setSaving(false);
     }
+  }
+
+  function openHistory() {
+    if (!flowId) return;
+    setHistoryOpen(true);
+    setDiffPick({});
+    setDiffResult(null);
+    setGitDiffResult(null);
+    void listFlowVersions(flowId).then(setVersions);
+    void listFlowPins(flowId).then(setPins);
+    void getGitHistory(flowId).then((h) => setGitCommits(h.available ? h.commits : []));
+  }
+
+  async function handlePin(versionId: string) {
+    if (!flowId) return;
+    await setFlowPin(flowId, "default", versionId);
+    void listFlowPins(flowId).then(setPins);
+  }
+
+  async function handleShowGitDiff(sha: string) {
+    if (!flowId) return;
+    setGitDiffResult(await getGitDiff(flowId, sha));
+  }
+
+  async function handleSaveAsVersion() {
+    const message = versionMessageDraft.trim();
+    if (!(await handleSave({ label: versionLabelDraft.trim(), ...(message ? { message } : {}) }))) return;
+    setSaveAsVersionOpen(false);
+    setVersionLabelDraft("");
+    setVersionMessageDraft("");
+    if (historyOpen && flowId) void listFlowVersions(flowId).then(setVersions);
+  }
+
+  async function handleLabelVersion(versionId: string) {
+    if (!flowId) return;
+    await labelFlowVersion(flowId, versionId, versionLabelDraft.trim(), versionMessageDraft.trim() || undefined);
+    setRenameVersionId(null);
+    setVersionLabelDraft("");
+    setVersionMessageDraft("");
+    void listFlowVersions(flowId).then(setVersions);
+  }
+
+  async function handleRestore(versionId: string) {
+    if (!flowId) return;
+    await restoreFlowVersion(flowId, versionId);
+    await loadFlow(flowId);
+    void listFlowVersions(flowId).then(setVersions);
+    setDiffResult(null);
+  }
+
+  async function handleShowDiff(from: string, to: string) {
+    if (!flowId) return;
+    setDiffResult(await getFlowDiff(flowId, from, to));
   }
 
   function handleOverwriteConflict() {
@@ -433,6 +521,19 @@ export function Canvas() {
   function refreshState(execId: string, branchId: string) {
     getExecutionState(execId, branchId).then(setStateValues);
     getStateLineage(execId, branchId).then(setStateLineage);
+  }
+
+  /** Refreshes which flow version this execution ran and whether the flow's HEAD has moved on
+   *  since — the honest surface for step mode's deliberate HEAD-following (PLAN-FLOW-VERSIONING.md
+   *  §4.6), also shown for a plain Run. Called right after a run/step starts (baseline) and after
+   *  every save while a session is live (the actual moment drift can occur). */
+  async function refreshExecutionProvenance(execId: string, branchId: string) {
+    const status = await getExecution(execId, branchId);
+    setProvenance({
+      ...(status.flowVersion ? { flowVersion: status.flowVersion } : {}),
+      ...(status.changedSinceRun ? { changedSinceRun: status.changedSinceRun } : {}),
+    });
+    return status;
   }
 
   function subscribeToExecution(execId: string, branchId: string) {
@@ -500,11 +601,14 @@ export function Canvas() {
     setStepSession(null);
     setStateValues({});
     setStateLineage([]);
+    setProvenance(null);
     try {
       if (!(await handleSave())) return;
       const { executionId: newExecutionId, branchId } = await runFlow(flowId);
       setExecutionId(newExecutionId);
+      setActiveBranchId(branchId);
       subscribeToExecution(newExecutionId, branchId);
+      void refreshExecutionProvenance(newExecutionId, branchId);
     } catch (err) {
       setLog((prev) => [...prev, { seq: prev.length + 1, text: `run failed to start: ${(err as Error).message}` }]);
     }
@@ -518,14 +622,17 @@ export function Canvas() {
         setLog([]);
         setNodeStatus({});
         setSuspended([]);
+        setProvenance(null);
         const started = await stepStart(flowId);
         setExecutionId(started.executionId);
+        setActiveBranchId(started.branchId);
         subscribeToExecution(started.executionId, started.branchId);
         setStepSession({ executionId: started.executionId, currentBranchId: started.branchId });
         setBranches(await listBranches(started.executionId));
         setHistory([]);
         setStateValues({});
         setStateLineage([]);
+        void refreshExecutionProvenance(started.executionId, started.branchId);
         return;
       }
       const outcome = await stepOnce(stepSession.executionId, stepSession.currentBranchId);
@@ -542,12 +649,13 @@ export function Canvas() {
     if (!stepSession) return;
     const forked = await stepBack(stepSession.executionId, snapshotId);
     setStepSession({ executionId: stepSession.executionId, currentBranchId: forked.branchId });
+    setActiveBranchId(forked.branchId);
     setBranches(await listBranches(stepSession.executionId));
     const cutIdx = history.findIndex((h) => h.snapshotId === snapshotId);
     const truncated = cutIdx === -1 ? [] : history.slice(0, cutIdx + 1);
     setHistory(truncated);
     setNodeStatus(Object.fromEntries(truncated.map((h) => [h.nodeId, "done"])));
-    const status = await getExecution(stepSession.executionId, forked.branchId);
+    const status = await refreshExecutionProvenance(stepSession.executionId, forked.branchId);
     setLog(status.responses.map((r, i) => ({ seq: i, text: `${r.nodeId}: finished` })));
     refreshState(stepSession.executionId, forked.branchId);
   }
@@ -555,8 +663,9 @@ export function Canvas() {
   async function handleSwitchBranch(branchId: string) {
     if (!stepSession) return;
     setStepSession({ ...stepSession, currentBranchId: branchId });
+    setActiveBranchId(branchId);
     setHistory([]);
-    const status = await getExecution(stepSession.executionId, branchId);
+    const status = await refreshExecutionProvenance(stepSession.executionId, branchId);
     setLog(status.responses.map((r, i) => ({ seq: i, text: `${r.nodeId}: finished` })));
     refreshState(stepSession.executionId, branchId);
   }
@@ -646,8 +755,14 @@ export function Canvas() {
           <Button variant="outlined" color="inherit" onClick={addNode}>
             Add Node
           </Button>
-          <Button variant="contained" color="secondary" onClick={handleSave} disabled={saving}>
+          <Button variant="contained" color="secondary" onClick={() => void handleSave()} disabled={saving}>
             Save
+          </Button>
+          <Button variant="outlined" color="inherit" onClick={() => setSaveAsVersionOpen(true)} disabled={saving} data-testid="open-name-version">
+            Name version…
+          </Button>
+          <Button variant="outlined" color="inherit" onClick={openHistory} data-testid="open-history">
+            History
           </Button>
           <Button variant="contained" onClick={handleRun} disabled={!canRun}>
             Run
@@ -717,6 +832,156 @@ export function Canvas() {
           <Button color="warning" onClick={handleOverwriteConflict} data-testid="conflict-overwrite">
             Overwrite anyway
           </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={saveAsVersionOpen} onClose={() => setSaveAsVersionOpen(false)}>
+        <DialogTitle>Save as version</DialogTitle>
+        <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 360, pt: 1 }}>
+          <TextField
+            label="Label"
+            autoFocus
+            value={versionLabelDraft}
+            onChange={(e) => setVersionLabelDraft(e.target.value)}
+            slotProps={{ htmlInput: { "data-testid": "save-version-label" } }}
+          />
+          <TextField
+            label="Message (optional)"
+            multiline
+            minRows={2}
+            value={versionMessageDraft}
+            onChange={(e) => setVersionMessageDraft(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSaveAsVersionOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={versionLabelDraft.trim().length === 0}
+            onClick={() => void handleSaveAsVersion()}
+            data-testid="save-version-confirm"
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={historyOpen} onClose={() => setHistoryOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Version history</DialogTitle>
+        <DialogContent>
+          <Typography variant="caption" color="text.secondary">
+            Pick two rows (From / To) to diff them. Newest first.
+          </Typography>
+          <List dense data-testid="version-history-list">
+            {versions.map((v) => (
+              <ListItem
+                key={v.id}
+                divider
+                secondaryAction={
+                  <Box sx={{ display: "flex", gap: 0.5 }}>
+                    <Button
+                      size="small"
+                      variant={diffPick.from === v.id ? "contained" : "outlined"}
+                      onClick={() => setDiffPick((prev) => ({ ...prev, from: v.id }))}
+                      data-testid={`version-pick-from-${v.version}`}
+                    >
+                      From
+                    </Button>
+                    <Button
+                      size="small"
+                      variant={diffPick.to === v.id ? "contained" : "outlined"}
+                      onClick={() => setDiffPick((prev) => ({ ...prev, to: v.id }))}
+                      data-testid={`version-pick-to-${v.version}`}
+                    >
+                      To
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setRenameVersionId(v.id);
+                        setVersionLabelDraft(v.label ?? "");
+                        setVersionMessageDraft(v.message ?? "");
+                      }}
+                    >
+                      Label
+                    </Button>
+                    <Button size="small" color="warning" disabled={v.isHead} onClick={() => void handleRestore(v.id)} data-testid={`version-restore-${v.version}`}>
+                      Restore
+                    </Button>
+                    <Button size="small" onClick={() => void handlePin(v.id)} data-testid={`version-pin-${v.version}`}>
+                      Pin
+                    </Button>
+                  </Box>
+                }
+              >
+                <ListItemText
+                  primary={
+                    <>
+                      v{v.version} {v.label && <strong>— {v.label}</strong>} {v.isHead && <em>(HEAD)</em>}{" "}
+                      {pins
+                        .filter((p) => p.flowVersionId === v.id)
+                        .map((p) => (
+                          <em key={p.channel}> 📌 {p.channel}</em>
+                        ))}
+                    </>
+                  }
+                  secondary={`${new Date(v.createdAt).toLocaleString()} · ${v.executionCount} execution${v.executionCount === 1 ? "" : "s"}${v.message ? ` · ${v.message}` : ""}`}
+                />
+              </ListItem>
+            ))}
+          </List>
+          {renameVersionId && (
+            <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 1 }}>
+              <TextField size="small" label="Label" value={versionLabelDraft} onChange={(e) => setVersionLabelDraft(e.target.value)} />
+              <TextField size="small" label="Message" value={versionMessageDraft} onChange={(e) => setVersionMessageDraft(e.target.value)} />
+              <Button size="small" variant="contained" onClick={() => void handleLabelVersion(renameVersionId)}>
+                Save label
+              </Button>
+              <Button size="small" onClick={() => setRenameVersionId(null)}>
+                Cancel
+              </Button>
+            </Box>
+          )}
+          <Box sx={{ mt: 2 }}>
+            <Button
+              variant="contained"
+              disabled={!diffPick.from || !diffPick.to}
+              onClick={() => diffPick.from && diffPick.to && void handleShowDiff(diffPick.from, diffPick.to)}
+              data-testid="compare-versions"
+            >
+              Compare
+            </Button>
+          </Box>
+          {diffResult && <Box sx={{ mt: 2 }} data-testid="version-diff">{renderGraphDiff(diffResult)}</Box>}
+          {gitCommits.length > 0 && (
+            <>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="subtitle2">Git history (read-only)</Typography>
+              <Typography variant="caption" color="text.secondary">
+                This flow's `.flow` file is tracked in git. flowlathe never writes to your repo — this is `git log`/`git show`, read-only.
+              </Typography>
+              <List dense data-testid="git-history-list">
+                {gitCommits.map((c) => (
+                  <ListItem
+                    key={c.sha}
+                    divider
+                    secondaryAction={
+                      <Button size="small" onClick={() => void handleShowGitDiff(c.sha)} data-testid={`git-diff-${c.sha.slice(0, 7)}`}>
+                        Diff vs current
+                      </Button>
+                    }
+                  >
+                    <ListItemText
+                      primary={`${c.sha.slice(0, 7)} — ${c.message}`}
+                      secondary={new Date(c.date).toLocaleString()}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+              {gitDiffResult && <Box sx={{ mt: 2 }} data-testid="git-diff-result">{renderGraphDiff(gitDiffResult)}</Box>}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHistoryOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
       {theme.palette.mode === "dark" && (
@@ -904,6 +1169,21 @@ export function Canvas() {
                 <Typography variant="caption" color="text.secondary">
                   branch: {stepSession.currentBranchId.slice(0, 8)}
                 </Typography>
+                {provenance?.changedSinceRun?.semantic && provenance.flowVersion && (
+                  <Alert severity="info" sx={{ mt: 1 }} data-testid="stepping-stale-chip">
+                    Stepping against the current graph — {provenance.changedSinceRun.nodesChanged} node
+                    {provenance.changedSinceRun.nodesChanged === 1 ? "" : "s"} changed since this session started.{" "}
+                    <Link
+                      component="button"
+                      onClick={() => {
+                        openHistory();
+                        void handleShowDiff(provenance.flowVersion!.id, provenance.changedSinceRun!.currentVersionId);
+                      }}
+                    >
+                      view diff
+                    </Link>
+                  </Alert>
+                )}
                 <List dense data-testid="step-history">
                   {history.map((h) => (
                     <ListItem
@@ -946,6 +1226,27 @@ export function Canvas() {
           )}
           <Box sx={{ p: 2, flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Typography variant="subtitle2">Execution log</Typography>
+            {provenance?.flowVersion && (
+              <Typography variant="caption" color="text.secondary" data-testid="execution-provenance">
+                ran {provenance.flowVersion.label ?? `v${provenance.flowVersion.version}`}
+                {!stepSession && provenance.changedSinceRun?.semantic && (
+                  <>
+                    {" — flow has changed since this run ("}
+                    {provenance.changedSinceRun.nodesChanged} node{provenance.changedSinceRun.nodesChanged === 1 ? "" : "s"}
+                    {"). "}
+                    <Link
+                      component="button"
+                      onClick={() => {
+                        openHistory();
+                        void handleShowDiff(provenance.flowVersion!.id, provenance.changedSinceRun!.currentVersionId);
+                      }}
+                    >
+                      view diff
+                    </Link>
+                  </>
+                )}
+              </Typography>
+            )}
             <List dense sx={{ overflowY: "auto", flexGrow: 1 }} data-testid="execution-log">
               {log.map((line) => (
                 <ListItem key={line.seq} disablePadding>
@@ -1422,4 +1723,117 @@ function describeEvent(event: RunEvent): string {
     case "run_failed":
       return `run failed: ${event.error}`;
   }
+}
+
+function describeReparent(r: { from?: string; to?: string }): string {
+  if (r.from && r.to) return `moved from body "${r.from}" into body "${r.to}"`;
+  if (r.to) return `moved into body "${r.to}"`;
+  if (r.from) return `moved out of body "${r.from}" (now top-level)`;
+  return "reparented";
+}
+
+/** PLAN-FLOW-VERSIONING.md §4.4/§4.5's structural diff, rendered read-only. Multi-line string
+ *  fields (prompt templates, the main payload of a real change) get a per-line +/- view instead of
+ *  the raw before/after values. */
+function renderGraphDiff({ diff, isSemanticChange }: { diff: GraphDiff; isSemanticChange: boolean }) {
+  const nothingChanged =
+    diff.nodes.added.length === 0 &&
+    diff.nodes.removed.length === 0 &&
+    diff.nodes.changed.length === 0 &&
+    diff.edges.added.length === 0 &&
+    diff.edges.removed.length === 0 &&
+    diff.state.added.length === 0 &&
+    diff.state.removed.length === 0 &&
+    diff.state.changed.length === 0;
+
+  if (nothingChanged) return <Typography variant="body2">No differences.</Typography>;
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      {!isSemanticChange && <Alert severity="info">Layout only — no change to the flow's behavior.</Alert>}
+      {diff.nodes.added.map((n) => (
+        <Alert key={`added-${n.id}`} severity="success" icon={false}>
+          + node "{n.id}" ({n.type})
+        </Alert>
+      ))}
+      {diff.nodes.removed.map((n) => (
+        <Alert key={`removed-${n.id}`} severity="error" icon={false}>
+          − node "{n.id}" ({n.type})
+        </Alert>
+      ))}
+      {diff.nodes.changed.map((c) => (
+        <Paper key={c.id} variant="outlined" sx={{ p: 1.5 }}>
+          <Typography variant="subtitle2">
+            node "{c.id}" ({c.kind})
+          </Typography>
+          {c.reparented && (
+            <Typography variant="body2" color="warning.main">
+              {describeReparent(c.reparented)}
+            </Typography>
+          )}
+          {c.movedTo && (
+            <Typography variant="caption" color="text.secondary">
+              position only: moved to ({c.movedTo.x}, {c.movedTo.y})
+            </Typography>
+          )}
+          {c.fields.map((f) => (
+            <Box key={f.path} sx={{ mt: 0.5 }}>
+              <Typography variant="body2" sx={{ fontWeight: "bold" }}>
+                {f.path}
+              </Typography>
+              {f.lineDiff ? (
+                <Box component="pre" sx={{ m: 0, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>
+                  {f.lineDiff.map((entry, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        color: entry.kind === "added" ? "green" : entry.kind === "removed" ? "crimson" : undefined,
+                      }}
+                    >
+                      {entry.kind === "added" ? "+ " : entry.kind === "removed" ? "− " : "  "}
+                      {entry.line}
+                    </div>
+                  ))}
+                </Box>
+              ) : (
+                <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
+                  {JSON.stringify(f.before)} → {JSON.stringify(f.after)}
+                </Typography>
+              )}
+            </Box>
+          ))}
+        </Paper>
+      ))}
+      {diff.edges.added.map((e, i) => (
+        <Alert key={`edge-added-${i}`} severity="success" icon={false}>
+          + edge {e.source}.{e.sourceHandle ?? "output"} → {e.target}.{e.targetHandle ?? "input"}
+        </Alert>
+      ))}
+      {diff.edges.removed.map((e, i) => (
+        <Alert key={`edge-removed-${i}`} severity="error" icon={false}>
+          − edge {e.source}.{e.sourceHandle ?? "output"} → {e.target}.{e.targetHandle ?? "input"}
+        </Alert>
+      ))}
+      {diff.state.added.map((s) => (
+        <Alert key={`state-added-${s.name}`} severity="success" icon={false}>
+          + state "{s.name}"
+        </Alert>
+      ))}
+      {diff.state.removed.map((s) => (
+        <Alert key={`state-removed-${s.name}`} severity="error" icon={false}>
+          − state "{s.name}"
+        </Alert>
+      ))}
+      {diff.state.changed.map((c) => (
+        <Paper key={c.name} variant="outlined" sx={{ p: 1.5 }}>
+          <Typography variant="subtitle2">state "{c.name}"</Typography>
+          {c.fields.map((f) => (
+            <Typography key={f.path} variant="caption" sx={{ display: "block", fontFamily: "monospace" }}>
+              {f.path}: {JSON.stringify(f.before)} → {JSON.stringify(f.after)}
+            </Typography>
+          ))}
+        </Paper>
+      ))}
+    </Box>
+  );
 }

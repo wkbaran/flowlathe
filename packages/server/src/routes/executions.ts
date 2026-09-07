@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
-import type { Scheduler, ToolRegistration } from "@flowlathe/core";
+import { diffGraphs, isSemanticChange, type Scheduler, type ToolRegistration } from "@flowlathe/core";
 import {
+  getFlow,
   type Db,
   getExecution,
   getFlowVersionRow,
@@ -37,7 +38,11 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     async (request, reply) => {
       const execution = getExecution(db, request.params.id);
       if (!execution) return reply.code(404).send({ error: "execution not found" });
-      return { execution, responses: listResponses(db, request.params.id, request.query.branchId) };
+      return {
+        execution,
+        responses: listResponses(db, request.params.id, request.query.branchId),
+        ...describeFlowVersionProvenance(db, execution.flowVersionId),
+      };
     },
   );
 
@@ -152,4 +157,30 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
 
 function writeEvent(res: ServerResponse, seq: number, kind: string, payload: unknown): void {
   res.write(`id: ${seq}\nevent: ${kind}\ndata: ${JSON.stringify(payload)}\n\n`);
+}
+
+interface FlowVersionProvenance {
+  flowVersion?: { id: string; version: number; label: string | null; flowId: string };
+  /** Present only when the flow's current HEAD differs from the version this execution ran —
+   *  PLAN-FLOW-VERSIONING.md §4.5: "flow has changed since this run (N nodes)." */
+  changedSinceRun?: { semantic: boolean; nodesChanged: number; currentVersionId: string };
+}
+
+/** Which version an execution ran, by label when it has one, and whether the flow has moved on
+ *  since — the honest surface for step mode's deliberate HEAD-following (§4.6) applied to a
+ *  finished run's detail view too. */
+function describeFlowVersionProvenance(db: Db, flowVersionId: string): FlowVersionProvenance {
+  const version = getFlowVersionRow(db, flowVersionId);
+  if (!version) return {};
+  const flowVersion = { id: version.id, version: version.version, label: version.label, flowId: version.flowId };
+
+  const currentHead = getFlow(db, version.flowId);
+  if (!currentHead || currentHead.flowVersionId === version.id) return { flowVersion };
+
+  const diff = diffGraphs(version.graph, currentHead.graph);
+  const nodesChanged = diff.nodes.added.length + diff.nodes.removed.length + diff.nodes.changed.length;
+  return {
+    flowVersion,
+    changedSinceRun: { semantic: isSemanticChange(diff), nodesChanged, currentVersionId: currentHead.flowVersionId },
+  };
 }

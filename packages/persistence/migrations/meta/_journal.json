@@ -29,6 +29,20 @@
       "when": 1788751335569,
       "tag": "0003_breezy_satana",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788754184714,
+      "tag": "0004_lovely_sasquatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788754996879,
+      "tag": "0005_far_the_santerians",
+      "breakpoints": true
     }
   ]
 }

@@ -54,7 +54,7 @@ describe("cmdFlows", () => {
     logSpy.mockRestore();
   });
 
-  it("importing the same flow name again saves a new version, not a new flow", async () => {
+  it("importing the identical flow text again dedups: no new version, not a new flow", async () => {
     const file = join(dir, "research-brief.flow");
     await writeFile(file, CHAIN);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -64,7 +64,24 @@ describe("cmdFlows", () => {
     const code = await cmdFlows(["import", file, "--db", dbPath]);
 
     expect(code).toBe(0);
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("version 2"));
+    // Content-hash dedup (PLAN-FLOW-VERSIONING.md §4.2): re-importing unchanged text creates no
+    // new row, so this is still version 1, not 2.
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('saved "research-brief" as version 1'));
+    logSpy.mockRestore();
+  });
+
+  it("importing changed flow text bumps the version, not a new flow", async () => {
+    const file = join(dir, "research-brief.flow");
+    await writeFile(file, CHAIN);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await cmdFlows(["import", file, "--db", dbPath]);
+    await writeFile(file, CHAIN.replace('template = "start"', 'template = "start, changed"'));
+    logSpy.mockClear();
+    const code = await cmdFlows(["import", file, "--db", dbPath]);
+
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('saved "research-brief" as version 2'));
     logSpy.mockRestore();
   });
 

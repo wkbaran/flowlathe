@@ -1,4 +1,4 @@
-import type { FlowGraph } from "@flowlathe/core";
+import type { FlowGraph, GraphDiff } from "@flowlathe/core";
 
 export interface FlowSummary {
   id: string;
@@ -44,18 +44,122 @@ export type SaveFlowResult = { ok: true; flow: FlowWithGraph } | { ok: false; co
 /** `ifMatch` is the content hash of the version this canvas last loaded — omit it to save
  *  unconditionally (last-write-wins, pre-S3 behavior). A 409 means the file changed on disk
  *  since; the caller gets the current on-disk text back to show the user instead of a thrown
- *  error, since "the file changed externally" is an expected, recoverable outcome, not a bug. */
-export async function saveFlowGraph(id: string, graph: FlowGraph, ifMatch?: string): Promise<SaveFlowResult> {
+ *  error, since "the file changed externally" is an expected, recoverable outcome, not a bug.
+ *  `label`/`message` name this save as a milestone ("Save as version…") — a plain Save omits
+ *  them, always producing an unnamed (autosaved) revision. */
+export async function saveFlowGraph(
+  id: string,
+  graph: FlowGraph,
+  ifMatch?: string,
+  opts?: { label?: string; message?: string },
+): Promise<SaveFlowResult> {
   const res = await fetch(`/api/flows/${id}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ graph, ifMatch }),
+    body: JSON.stringify({ graph, ifMatch, ...opts }),
   });
   if (res.status === 409) {
     const body = (await res.json()) as { currentText: string };
     return { ok: false, conflictText: body.currentText };
   }
   return { ok: true, flow: await json<FlowWithGraph>(res) };
+}
+
+export interface FlowVersionSummary {
+  id: string;
+  version: number;
+  label: string | null;
+  message: string | null;
+  contentHash: string | null;
+  parentVersionId: string | null;
+  createdAt: string;
+  isHead: boolean;
+  executionCount: number;
+}
+
+/** Newest first — PLAN-FLOW-VERSIONING.md §4.5's version-history drawer. */
+export function listFlowVersions(flowId: string): Promise<FlowVersionSummary[]> {
+  return fetch(`/api/flows/${flowId}/versions`).then((res) => json(res));
+}
+
+export interface FlowVersionDetail {
+  id: string;
+  flowId: string;
+  version: number;
+  graph: FlowGraph;
+  sourceText: string | null;
+  contentHash: string | null;
+  label: string | null;
+  message: string | null;
+  parentVersionId: string | null;
+  createdAt: string;
+}
+
+export function getFlowVersion(flowId: string, versionId: string): Promise<FlowVersionDetail> {
+  return fetch(`/api/flows/${flowId}/versions/${versionId}`).then((res) => json(res));
+}
+
+/** Names an arbitrary past revision in place — no new row. */
+export function labelFlowVersion(flowId: string, versionId: string, label: string, message?: string): Promise<FlowVersionDetail> {
+  return fetch(`/api/flows/${flowId}/versions/${versionId}/label`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ label, message }),
+  }).then((res) => json(res));
+}
+
+export function getFlowDiff(flowId: string, from: string, to: string): Promise<{ diff: GraphDiff; isSemanticChange: boolean }> {
+  const params = new URLSearchParams({ from, to });
+  return fetch(`/api/flows/${flowId}/diff?${params}`).then((res) => json(res));
+}
+
+/** Creates a NEW head equal to `versionId`'s graph — history is never rewritten. */
+export function restoreFlowVersion(flowId: string, versionId: string): Promise<FlowWithGraph> {
+  return fetch(`/api/flows/${flowId}/restore`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ versionId }),
+  }).then((res) => json(res));
+}
+
+export interface FlowPin {
+  flowId: string;
+  channel: string;
+  flowVersionId: string;
+  updatedAt: string;
+}
+
+/** A named pointer some consumer follows (starting with `"default"`) — never re-resolved to HEAD
+ *  on its own (PLAN-FLOW-VERSIONING.md §3/§6). A Discord trigger pins directly via its own row
+ *  instead of this table; see `/api/triggers`. */
+export function listFlowPins(flowId: string): Promise<FlowPin[]> {
+  return fetch(`/api/flows/${flowId}/pins`).then((res) => json(res));
+}
+
+export function setFlowPin(flowId: string, channel: string, flowVersionId: string): Promise<FlowPin> {
+  return fetch(`/api/flows/${flowId}/pins/${encodeURIComponent(channel)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ flowVersionId }),
+  }).then((res) => json(res));
+}
+
+export interface GitCommitInfo {
+  sha: string;
+  date: string;
+  message: string;
+}
+
+/** Absent (or outside) a git work tree, `available` is false and the git tab simply shouldn't
+ *  render (PLAN-FLOW-VERSIONING.md §5) — never an error. */
+export function getGitHistory(flowId: string): Promise<{ available: boolean; commits: GitCommitInfo[] }> {
+  return fetch(`/api/flows/${flowId}/git-history`).then((res) => json(res));
+}
+
+/** `to` omitted diffs `from` against the flow's current graph. */
+export function getGitDiff(flowId: string, from: string, to?: string): Promise<{ diff: GraphDiff; isSemanticChange: boolean }> {
+  const params = new URLSearchParams({ from, ...(to ? { to } : {}) });
+  return fetch(`/api/flows/${flowId}/git-diff?${params}`).then((res) => json(res));
 }
 
 /** Paste-to-import (PLAN-FLOW-DSL.md S4): creates a new flow, or saves a new version of an
@@ -99,6 +203,12 @@ export interface ResponseLogEntry {
 export interface ExecutionStatus {
   execution: { id: string; status: string; startedAt: string; endedAt: string | null; rootBranchId: string | null };
   responses: ResponseLogEntry[];
+  /** Which flow version this execution ran, by label when it has one. Absent only if the version
+   *  row itself is somehow gone. */
+  flowVersion?: { id: string; version: number; label: string | null; flowId: string };
+  /** Present only when the flow's current HEAD has moved on since this execution ran
+   *  (PLAN-FLOW-VERSIONING.md §4.5/§4.6) — the same signal drives step mode's staleness chip. */
+  changedSinceRun?: { semantic: boolean; nodesChanged: number; currentVersionId: string };
 }
 
 export function getExecution(executionId: string, branchId?: string): Promise<ExecutionStatus> {

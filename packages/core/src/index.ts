@@ -10,3 +10,5 @@ export * from "./plugin-manifest.js";
 export * from "./regions.js";
 export * from "./url-safety.js";
 export * from "./slug.js";
+export * from "./canonical.js";
+export * from "./diff.js";

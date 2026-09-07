@@ -248,6 +248,37 @@ flow "research-brief" {
 See `PLAN-FLOW-DSL.md` for the full design (grammar, storage model, and the tradeoffs behind
 each of the above).
 
+## Flow versioning
+
+`flow_versions` is now a real history, not just noise from every autosave. Three distinct things:
+
+- **Revision** — an immutable, content-addressed snapshot of a graph, taken on every save that
+  actually changes something. Cheap and numerous; an unchanged save (a debugging session that runs
+  the same graph ten times) creates no new row. Garbage-collected once it's old, superseded, and
+  unreferenced — see below.
+- **Named version** — a revision a human labeled ("baseline", "with-reranker", "v2 for demo"), via
+  "Name version…" next to Save, or by labeling an existing row from the History drawer. Never
+  garbage-collected.
+- **Pin** — a named pointer some consumer follows (a Discord trigger, or a `"default"` channel set
+  from the History drawer), changed only by an explicit action — a pin never silently drifts to
+  HEAD just because someone edited the canvas.
+
+The canvas's **History** button opens a drawer listing every revision (newest first, named ones
+called out), with a per-row **Restore** (loads that graph as a new HEAD — history is never
+rewritten, so the version you restored *from* stays right where it was) and **Pin**, plus a
+From/To picker that renders a structural diff (added/removed/changed nodes, edge rewiring, state
+changes, and a per-line view for multi-line template edits). A running or step-debugging session
+shows which version it's actually executing, and flags it if the flow's HEAD has since moved on —
+stepping deliberately keeps following HEAD (so an edit mid-session takes effect on the next step),
+this is just making that fact visible instead of silent. When `FLOWLATHE_FLOWS_DIR` is itself a git
+work tree, the drawer gains a read-only git history section too (`git log`/`git show` on that
+flow's file) — flowlathe never writes to your repo on your behalf.
+
+Retention is automatic: an unnamed revision is deleted once it's not HEAD, not referenced by any
+execution/trigger/pin, not among the newest 50 (`FLOWLATHE_VERSION_GC_KEEP_NEWEST`), and older than
+30 days (`FLOWLATHE_VERSION_GC_OLDER_THAN_DAYS`) — all four conditions at once, so nothing recent or
+load-bearing is ever at risk. See `PLAN-FLOW-VERSIONING.md` for the full design.
+
 ## Loop/Map bodies
 
 A Loop/Map body can be an arbitrary multi-node subgraph — any chain, fan-out, or nested
