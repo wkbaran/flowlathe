@@ -26,6 +26,11 @@ FROM base AS runtime
 ENV NODE_ENV=production
 COPY --from=build /app /app
 
+# HOST=0.0.0.0 here is a *bind* address, not the network posture — it binds every interface
+# inside the container's own network namespace, which `-p` port-forwarding requires (a container
+# bound to 127.0.0.1 is unreachable through `-p` from outside). The actual boundary is on the
+# host side of the publish: run this image with `-p 127.0.0.1:4310:4310`, never `-p 4310:4310`.
+# See README.md's "Deployment and network posture" section — the API itself is unauthenticated.
 ENV PORT=4310 \
     HOST=0.0.0.0 \
     FLOWLATHE_DB_PATH=/app/data/flowlathe.sqlite \

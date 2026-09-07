@@ -876,3 +876,31 @@ rediscover them the hard way.
     there is no `dist/` to copy for anything except `packages/web` (a real Vite build, copied in
     from a separate `build` stage). Don't try to "slim down" the runtime stage by pruning
     non-server package source — it's a load-bearing part of how the app runs, not build residue.
+- **PLAN-NETWORK-POSTURE.md added a `Host`-header allowlist (`packages/server/src/allowed-hosts.ts`),
+  the settled resolution of a prior audit's blocked "what's the posture" question.** The API stays
+  fully unauthenticated — this only closes DNS-rebinding-style attacks (a public page's script
+  sending a request that lands on the loopback-bound server with a rebound `Host`), it does **not**
+  add any form of auth. That half (FIX §4 option 2: a shared secret next to `credential.key`,
+  carried by cookie/query param since `EventSource` can't set custom headers) is deliberately
+  deferred, not implemented.
+  - **`0.0.0.0` must never be added to `DEFAULT_ALLOWED_HOSTS`.** It's a *bind* address, unrelated
+    to what a client may put in a `Host` header — browsers on Linux/macOS will route
+    `http://0.0.0.0:<port>` to a loopback-bound server (the "0.0.0.0 day" bug class), so
+    allowlisting it would reopen exactly the hole this module exists to close. The Dockerfile's
+    `HOST=0.0.0.0` is a completely separate knob (which interface the process binds inside its own
+    network namespace) — adding it to the Host allowlist "for symmetry" is the trap.
+  - **`normalizeHost` does real work, not cosmetic cleanup**: a trailing dot (`localhost.` is a
+    valid FQDN for `localhost`) and case (`LocalHost.`) are both real bypasses against a naive
+    `===`, and the match is exact-only — no `endsWith`, since that would match `evil-localhost`
+    against `localhost`.
+  - **The `onRequest` hook has no exemption list, by construction.** The Spotify OAuth callback
+    (the one route that has to stay reachable without the allowlist blocking it) needs none: its
+    own request's `Host` is whatever `SPOTIFY_REDIRECT_URI`'s hostname is, so `index.ts` just
+    pushes that hostname onto the allowlist instead of special-casing the route.
+  - **A worktree/branch created off `origin/main` can silently be missing recent local-only
+    commits.** Implementing this plan in a fresh worktree initially appeared to be missing both
+    the Dockerfile and `index.ts`'s `HOST` env-var read entirely — not a code regression, just the
+    worktree's base ref (`origin/main`) trailing the local `main` branch by an unpushed commit.
+    Fixed by rebasing the worktree branch onto local `main` before starting. Worth checking
+    `git branch -vv` for an "ahead" marker before trusting a fresh worktree matches what `git log`
+    on the main checkout shows.
