@@ -488,3 +488,51 @@ rediscover them the hard way.
     handlers) — a body activation's events carry a scoped id like `node-2@node-1:0`, and without
     stripping it a body node's box would never light up during a run. The raw scoped id is kept
     in the log text (`describeEvent`), which `slice3-map-fanout.spec.ts` already asserts on.
+- **PLAN-INTEGRATIONS.md Phase A landed `PluginManifest` (`@flowlathe/core`) and split
+  `routes/plugins-spotify.ts`'s generic `/api/plugins/status` aggregate into its own
+  `routes/plugins.ts` (`registerPluginRoutes`).** One thing worth knowing before adding a fifth
+  plugin: `configured`/`connected` in that route are derived **uniformly** from
+  `pluginToolsets` — `configured` is "this toolset has at least one live `ToolRegistration`",
+  `connected` is "and none of them report `unavailableReason()`" — with **zero** per-plugin
+  special-casing, including for Spotify. That only works because every plugin (Spotify included)
+  already follows the "unset env var/config ⇒ zero tool registrations" locked decision from
+  `packages/server/src/index.ts`; a future plugin that registers unconditionally (tools present
+  but always failing `unavailableReason()`) would silently read as "configured" when it isn't.
+  MCP is the one deliberate exception (`mcpStatuses`, folded in separately) since its discovery
+  can fail and still contribute zero registrations, indistinguishable from "never configured" —
+  see the existing MCP scope-cut note above.
+- **`@flowlathe/plugin-common` (`packages/plugins/_common`) now holds the shared tool-plugin
+  helpers**: `toolOk`/`toolFail` (one JSON envelope, `{ok, data}` / `{ok, error}` — key order
+  matters, it reaches the model as JSON text), `guarded`/`httpGetJson`/`requestJson` (one
+  error-classification taxonomy: `PluginHttpError` for a non-2xx response, `PluginNetworkError`
+  for an unreachable host, `SyntaxError` for unparseable JSON), argument coercion
+  (`requireString`/`asStringArray`/`clampLimit`, moved out of `@flowlathe/plugin-spotify`), and
+  `sanitizeUntrustedText` (generalized from `@flowlathe/plugin-mcp`'s tool-description sanitizer,
+  which now delegates to it). **`guarded`'s classifier intentionally does NOT re-prefix a
+  `PluginHttpError`/`PluginNetworkError`'s own message with `${vendor} ${kind} failed:`** — those
+  two error types already carry a caller-supplied `label` (from `httpGetJson`'s first argument),
+  so re-prefixing would double up the context (e.g. "searxng search failed: SearXNG search:
+  could not reach ..."). The `vendor`/`kind` prefix is reserved for errors with no such built-in
+  context (a bare `Error`, a `SyntaxError`, an `AbortError`). Any new plugin composing
+  `guarded(vendor, kind, () => httpGetJson(label, ...))` should give `label` and
+  `vendor`/`kind` compatible, non-redundant wording.
+- **`@flowlathe/plugin-searxng`'s `unavailableReason` can't do a live network probe synchronously**
+  (`findMissingToolsets` runs on `/run`, `/step-start`, and every `GraphEngine` construction
+  including step-mode restores — none of which can block on I/O), so `CachedLivenessProbe`
+  (`packages/plugins/searxng/src/liveness.ts`) is optimistic before its first probe resolves
+  (reports reachable) and only re-probes once a 60s TTL elapses, kicking off the refresh
+  fire-and-forget rather than awaiting it. A newly-registered SearXNG toolset can therefore
+  briefly report itself usable for a moment even if the instance is actually down — an
+  intentional tradeoff (never block a request-path check on a network round trip), not a bug.
+- **No Playwright e2e spec was added for Phase A (SearXNG), despite PLAN-INTEGRATIONS.md §8
+  asking for "one spec per phase."** `playwright/tests/` currently has no spec at all for
+  Spotify, Gate, or MCP either — despite CLAUDE.md's own Gate/Slice-6 entries above describing
+  Playwright gotchas as if such specs exist, the actual spec files were apparently never
+  committed (or were later removed) for any plugin-shaped slice; only the core numbered
+  slice0–slice7 flow specs are present. Given that pattern, Phase A's unit-test coverage
+  (`client.test.ts`/`tools.test.ts`/`liveness.test.ts`/`env.test.ts`, all offline against an
+  injected `fetchImpl`) was prioritized over writing the first-ever plugin e2e spec from
+  scratch, which would also need a fixture SearXNG HTTP server wired into
+  `playwright/playwright.config.ts`'s `webServer.env` (the same gap this file already flags as
+  *not done* for MCP). Left as a real, tracked gap for whoever picks up e2e coverage for the
+  plugin surface generally — not SearXNG-specific.

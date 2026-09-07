@@ -19,6 +19,7 @@
     "@flowlathe/interpreter": "workspace:*",
     "@flowlathe/persistence": "workspace:*",
     "@flowlathe/plugin-mcp": "workspace:*",
+    "@flowlathe/plugin-searxng": "workspace:*",
     "@flowlathe/plugin-spotify": "workspace:*",
     "@flowlathe/providers": "workspace:*",
     "@flowlathe/runtime": "workspace:*",

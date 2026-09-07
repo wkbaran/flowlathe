@@ -118,6 +118,15 @@ discovered once at server startup and exposed as the toolset `mcp:<name>`; check
 `/api/plugins/status` (or the workflow-dependency banner on the canvas) if a server fails to
 connect.
 
+To enable web search, set `SEARXNG_BASE_URL` to a running
+[SearXNG](https://docs.searxng.org/) instance's base URL (self-hosted or otherwise) — this
+registers the `searxng_search` tool under the `searxng` toolset. Unset, the toolset simply isn't
+registered (a flow using it shows the same workflow-dependency banner as an unconfigured MCP
+server). Optional `SEARXNG_ENGINES`, `SEARXNG_LANGUAGE`, and `SEARXNG_SAFESEARCH` set defaults
+applied to every search. Search results are third-party web content passed into a model's
+context — sanitized for hidden characters and flagged for common prompt-injection phrasing, but
+still worth treating as untrusted when the flow's output reaches somewhere sensitive.
+
 ## Loop/Map bodies
 
 A Loop/Map body can be an arbitrary multi-node subgraph — any chain, fan-out, or nested
