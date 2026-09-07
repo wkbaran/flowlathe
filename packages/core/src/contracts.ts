@@ -26,6 +26,12 @@ export interface ToolCall {
 
 export interface ToolInvokeMeta {
   activationKey: string;
+  /** Set when the caller has a real cancellation signal available (currently: never, in this
+   *  codebase — see CLAUDE.md's "cancellation is a real gap" note). Threaded through so a
+   *  network-backed handler (SearXNG/Firecrawl/Discord) can pass it to `fetch` and check it
+   *  between URLs in a batch the moment a producer exists; the built-in state tools ignore it
+   *  harmlessly since they do no I/O. */
+  signal?: AbortSignal | undefined;
 }
 
 /** Ambient, non-user-visible (same family as LlmConfigStore/ContextStore): a set of named tools

@@ -1,13 +1,14 @@
 import fastifyStatic from "@fastify/static";
-import type { ToolRegistration } from "@flowlathe/core";
+import type { PluginManifest, ToolRegistration } from "@flowlathe/core";
 import type { Db } from "@flowlathe/persistence";
-import type { SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
+import { SPOTIFY_MANIFEST, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ExecutionHub } from "./execution-hub.js";
 import { registerExecutionRoutes } from "./routes/executions.js";
 import { registerFlowRoutes } from "./routes/flows.js";
 import { registerProviderRoutes } from "./routes/providers.js";
-import { registerSpotifyPluginRoutes, type McpServerStatus } from "./routes/plugins-spotify.js";
+import { registerSpotifyPluginRoutes } from "./routes/plugins-spotify.js";
+import { registerPluginRoutes, type McpServerStatus } from "./routes/plugins.js";
 import type { SchedulerRegistry } from "./scheduler-registry.js";
 
 export interface BuildAppOptions {
@@ -21,6 +22,10 @@ export interface BuildAppOptions {
    *  into every execution's ToolRegistry alongside the built-in "state" toolset. Empty when none
    *  configured. */
   pluginToolsets?: ToolRegistration[] | undefined;
+  /** Manifests for every plugin *package* compiled into this server, regardless of whether it's
+   *  actually configured — see `routes/plugins.ts`. Always includes Spotify's; a caller adds its
+   *  own as new plugins are wired in (`index.ts`). */
+  pluginManifests?: PluginManifest[] | undefined;
   /** One entry per successfully-or-unsuccessfully-discovered MCP server, for `/api/plugins/status`. */
   mcpStatuses?: Record<string, McpServerStatus> | undefined;
 }
@@ -50,6 +55,10 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     db: opts.db,
     credentialKey: opts.credentialKey,
     config: opts.spotifyConfig,
+  });
+  registerPluginRoutes(app, {
+    manifests: opts.pluginManifests ?? [SPOTIFY_MANIFEST],
+    pluginToolsets: opts.pluginToolsets ?? [],
     ...(opts.mcpStatuses ? { mcpStatuses: opts.mcpStatuses } : {}),
   });
 

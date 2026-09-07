@@ -243,9 +243,17 @@ export function disconnectSpotify(): Promise<void> {
   return fetch("/api/plugins/spotify/disconnect", { method: "POST" }).then(() => undefined);
 }
 
-/** Keyed by toolset name (e.g. "spotify") — the workflow-level dependency check in Canvas.tsx
- *  reads this to decide which of a flow's `enabledToolsets` are actually usable, without needing
- *  to know about any specific plugin. */
-export function getPluginStatuses(): Promise<Record<string, PluginStatus>> {
+/** The generic, manifest-backed aggregate (see @flowlathe/core's PluginManifest and the server's
+ *  routes/plugins.ts) — `displayName`/`description` come from the plugin's own manifest, so the
+ *  UI never special-cases a toolset name (e.g. the old `mcp:` prefix check) to render one. */
+export interface PluginStatusEntry extends PluginStatus {
+  displayName: string;
+  description: string;
+}
+
+/** Keyed by toolset name (e.g. "spotify", "mcp:<name>") — the workflow-level dependency check in
+ *  Canvas.tsx reads this to decide which of a flow's `enabledToolsets` are actually usable,
+ *  without needing to know about any specific plugin. */
+export function getPluginStatuses(): Promise<Record<string, PluginStatusEntry>> {
   return fetch("/api/plugins/status").then((res) => json(res));
 }

@@ -6,4 +6,5 @@ export * from "./activation.js";
 export * from "./state.js";
 export * from "./context.js";
 export * from "./plugin-deps.js";
+export * from "./plugin-manifest.js";
 export * from "./regions.js";

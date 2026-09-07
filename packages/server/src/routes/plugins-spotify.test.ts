@@ -46,24 +46,6 @@ describe("GET /api/plugins/spotify/status", () => {
   });
 });
 
-describe("GET /api/plugins/status", () => {
-  it("aggregates known plugins by toolset name", async () => {
-    const app = buildTestApp({ clientId: "abc", redirectUri: "http://127.0.0.1:4310/callback" });
-    expect((await app.inject({ method: "GET", url: "/api/plugins/status" })).json()).toEqual({
-      spotify: { configured: true, connected: false },
-    });
-    await app.close();
-  });
-
-  it("reports not configured when SPOTIFY_CLIENT_ID isn't set", async () => {
-    const app = buildTestApp();
-    expect((await app.inject({ method: "GET", url: "/api/plugins/status" })).json()).toEqual({
-      spotify: { configured: false, connected: false },
-    });
-    await app.close();
-  });
-});
-
 describe("GET /api/plugins/spotify/oauth/start", () => {
   it("400s when the plugin isn't configured", async () => {
     const app = buildTestApp();

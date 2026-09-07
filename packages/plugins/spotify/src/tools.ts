@@ -1,40 +1,6 @@
 import type { ToolRegistration, ToolSpec } from "@flowlathe/core";
+import { asStringArray, clampLimit, requireString } from "@flowlathe/plugin-common";
 import { SpotifyClient, SpotifyError } from "./client.js";
-
-function requireString(args: Record<string, unknown>, key: string): string {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new SpotifyError(`missing required argument "${key}"`);
-  }
-  return value;
-}
-
-/** Accepts a real array, a JSON-array string, or a comma-separated string — models are
- *  inconsistent about which of these they emit for a "list of ids" argument. */
-function asStringArray(value: unknown): string[] {
-  if (value === undefined || value === null) return [];
-  if (Array.isArray(value)) return value.map(String);
-  const str = String(value).trim();
-  if (str === "") return [];
-  if (str.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(str);
-      if (Array.isArray(parsed)) return parsed.map(String);
-    } catch {
-      // fall through to comma-splitting
-    }
-  }
-  return str
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function clampLimit(value: unknown, fallback = 20): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(1, Math.min(50, Math.trunc(n)));
-}
 
 /** Spotify accepts either a bare id or a full "spotify:track:<id>"/URL form in most places, but
  *  the tracks/playlist-items "add" endpoint specifically wants URIs — normalize ids up to that. */

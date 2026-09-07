@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@flowlathe/core": "workspace:*",
+    "@flowlathe/plugin-common": "workspace:*",
     "@modelcontextprotocol/sdk": "1.30.0"
   },
   "devDependencies": {

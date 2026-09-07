@@ -55,7 +55,7 @@ import {
   stepStart,
   type BranchRecord,
   type ModelRecord,
-  type PluginStatus,
+  type PluginStatusEntry,
   type ProviderRecord,
   type StateLineageEdge,
 } from "../api.js";
@@ -126,9 +126,11 @@ const CHILD_TOP_Y = 56;
 const CHILD_ROW_HEIGHT = 90;
 const CONTAINER_WIDTH = 320;
 
-function displayName(toolset: string): string {
-  if (toolset.startsWith("mcp:")) return `${toolset.slice("mcp:".length)} (MCP)`;
-  return toolset.charAt(0).toUpperCase() + toolset.slice(1);
+/** `/api/plugins/status` carries each plugin's own `displayName` (from its `PluginManifest`),
+ *  so this is only a fallback for a toolset the status map hasn't reported yet (e.g. right after
+ *  a node is given a toolset the server doesn't know about) — no more `mcp:` prefix special-casing. */
+function displayName(toolset: string, statuses: Record<string, PluginStatusEntry>): string {
+  return statuses[toolset]?.displayName ?? (toolset.charAt(0).toUpperCase() + toolset.slice(1));
 }
 
 function defaultDataFor(type: NodeKind, id: string): Record<string, unknown> {
@@ -166,7 +168,7 @@ export function Canvas() {
   const [exportedScript, setExportedScript] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderRecord[]>([]);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelRecord[]>>({});
-  const [pluginStatuses, setPluginStatuses] = useState<Record<string, PluginStatus>>({});
+  const [pluginStatuses, setPluginStatuses] = useState<Record<string, PluginStatusEntry>>({});
   const [newNodeKind, setNewNodeKind] = useState<NodeKind>("prompt");
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [suspended, setSuspended] = useState<SuspendedActivation[]>([]);
@@ -454,11 +456,11 @@ export function Canvas() {
 
   const missingDeps = requiredToolsetsFrom(nodes).flatMap((toolset) => {
     const status = pluginStatuses[toolset];
-    if (!status?.configured) return [`${displayName(toolset)} plugin is not configured on the server`];
+    if (!status?.configured) return [`${displayName(toolset, pluginStatuses)} plugin is not configured on the server`];
     if (!status.connected) {
       return toolset.startsWith("mcp:")
-        ? [`${displayName(toolset)} MCP server is not reachable — check its config and restart the server`]
-        : [`${displayName(toolset)} is not connected — connect it from Providers`];
+        ? [`${displayName(toolset, pluginStatuses)} MCP server is not reachable — check its config and restart the server`]
+        : [`${displayName(toolset, pluginStatuses)} is not connected — connect it from Providers`];
     }
     return [];
   });
@@ -733,7 +735,7 @@ function NodeProperties(props: {
   providers: ProviderRecord[];
   modelsByProvider: Record<string, ModelRecord[]>;
   otherNodes: Node[];
-  pluginStatuses: Record<string, PluginStatus>;
+  pluginStatuses: Record<string, PluginStatusEntry>;
   onChange: (patch: Record<string, unknown>) => void;
   onParentChange: (parentId: string) => void;
 }) {
@@ -809,7 +811,7 @@ function NodeProperties(props: {
                     }}
                   />
                 }
-                label={`Enable ${displayName(toolset)} tools`}
+                label={`Enable ${displayName(toolset, pluginStatuses)} tools`}
               />
             ))}
           <TextField

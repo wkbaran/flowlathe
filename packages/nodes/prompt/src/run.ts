@@ -17,6 +17,7 @@ export async function runPrompt(
   ctx: RuntimeHost,
   spec: PromptSpec,
   inputs: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<PromptResult> {
   const contextKey = spec.contextNodeId ?? spec.id;
   const renderedPrompt = renderTemplate(spec.template, inputs);
@@ -52,7 +53,7 @@ export async function runPrompt(
         throw new Error(`prompt "${spec.id}" exceeded ${MAX_TOOL_ROUNDS} tool-call rounds without finishing`);
       }
       const resultLines = await Promise.all(
-        result.toolCalls.map((call) => ctx.tools.invoke(call.name, call.args, { activationKey: spec.id })),
+        result.toolCalls.map((call) => ctx.tools.invoke(call.name, call.args, { activationKey: spec.id, signal })),
       );
       prompt = `${prompt}\n[tool calls]\n${resultLines.join("\n")}\nContinue.`;
     }

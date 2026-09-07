@@ -1,9 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
-import type { ToolRegistration } from "@flowlathe/core";
+import type { PluginManifest, ToolRegistration } from "@flowlathe/core";
 import { ensureDefaultMockProvider, getPluginCredential, openDb, runMigrations, setPluginCredential } from "@flowlathe/persistence";
-import { createSpotifyToolset, SpotifyClient, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
+import { createSpotifyToolset, SpotifyClient, SPOTIFY_MANIFEST, type SpotifyOAuthConfig } from "@flowlathe/plugin-spotify";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
 import { discoverMcpToolsets, loadMcpServersConfig } from "./mcp-config.js";
@@ -24,6 +24,8 @@ ensureDefaultMockProvider(opened.db);
 
 const credentialKey = resolveCredentialKey(dataDir);
 const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
+
+const pluginManifests: PluginManifest[] = [SPOTIFY_MANIFEST];
 
 const spotifyClientId = process.env["SPOTIFY_CLIENT_ID"];
 let spotifyConfig: SpotifyOAuthConfig | undefined;
@@ -55,7 +57,16 @@ const { toolsets: mcpToolsets, statuses: mcpStatuses } = await discoverMcpToolse
 );
 pluginToolsets = [...pluginToolsets, ...mcpToolsets];
 
-const app = buildApp({ db: opened.db, credentialKey, schedulerRegistry, staticRoot, spotifyConfig, pluginToolsets, mcpStatuses });
+const app = buildApp({
+  db: opened.db,
+  credentialKey,
+  schedulerRegistry,
+  staticRoot,
+  spotifyConfig,
+  pluginToolsets,
+  pluginManifests,
+  mcpStatuses,
+});
 
 app.listen({ port, host: "127.0.0.1" }, (err, address) => {
   if (err) {

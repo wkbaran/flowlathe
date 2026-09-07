@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ToolRegistration } from "@flowlathe/core";
 import { createMcpToolset, type McpServerConfig } from "@flowlathe/plugin-mcp";
-import type { McpServerStatus } from "./routes/plugins-spotify.js";
+import type { McpServerStatus } from "./routes/plugins.js";
 
 interface McpServersFile {
   mcpServers?: Record<string, McpServerConfig>;

@@ -3,21 +3,11 @@ import { buildAuthorizeUrl, exchangeCodeForToken, generatePkcePair, type Spotify
 import { deletePluginCredential, hasPluginCredential, setPluginCredential, type Db } from "@flowlathe/persistence";
 import type { FastifyInstance } from "fastify";
 
-export interface McpServerStatus {
-  connected: boolean;
-  toolCount: number;
-  error?: string;
-}
-
 export interface SpotifyRouteDeps {
   db: Db;
   credentialKey: Buffer;
   /** Undefined when SPOTIFY_CLIENT_ID isn't set — routes report "not configured" instead of 500ing. */
   config: SpotifyOAuthConfig | undefined;
-  /** One entry per server in the `mcpServers` config file, keyed by the same name used in its
-   *  `mcp:<name>` toolset — see `packages/server/src/index.ts`. Discovery happens once at boot,
-   *  so this reflects that snapshot, not live connectivity (see CLAUDE.md for this v1 scope cut). */
-  mcpStatuses?: Record<string, McpServerStatus>;
 }
 
 interface PendingAuth {
@@ -28,26 +18,16 @@ interface PendingAuth {
 const PENDING_TTL_MS = 10 * 60 * 1000;
 
 export function registerSpotifyPluginRoutes(app: FastifyInstance, deps: SpotifyRouteDeps): void {
-  const { db, credentialKey, config, mcpStatuses } = deps;
+  const { db, credentialKey, config } = deps;
   /** Keyed by the OAuth `state` param, not persisted — a single-user local server restarting
    *  mid-flow just means the user clicks "Connect" again, which is an acceptable v1 tradeoff. */
   const pending = new Map<string, PendingAuth>();
 
+  /** Legacy Spotify-specific status route, kept alongside the generic `/api/plugins/status`
+   *  (see `routes/plugins.ts`) since nothing forces callers to migrate off it. */
   app.get("/api/plugins/spotify/status", async () => ({
     configured: config !== undefined,
     connected: hasPluginCredential(db, "spotify"),
-  }));
-
-  /** Generic aggregate the UI's workflow-dependency check reads (see Canvas.tsx) — keyed by
-   *  toolset name so it doesn't need to know "spotify" specifically. Spotify was the only plugin
-   *  when this route was written; MCP servers (keyed `mcp:<name>`) are the second, added via
-   *  `mcpStatuses` rather than moving this to a real plugin registry/aggregator — still a
-   *  reasonable v1 shape with two plugins, revisit if a third needs the same treatment. */
-  app.get("/api/plugins/status", async () => ({
-    spotify: { configured: config !== undefined, connected: hasPluginCredential(db, "spotify") },
-    ...Object.fromEntries(
-      Object.entries(mcpStatuses ?? {}).map(([name, status]) => [`mcp:${name}`, { configured: true, connected: status.connected }]),
-    ),
   }));
 
   app.get("/api/plugins/spotify/oauth/start", async (_request, reply) => {
