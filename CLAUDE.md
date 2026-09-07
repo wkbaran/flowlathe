@@ -849,6 +849,65 @@ rediscover them the hard way.
     for real (no mocking) end-to-end through the HTTP routes
     (`routes/flows-versioning.test.ts`'s "git history (Layer 2, S6)" block). Left as a tracked gap,
     not a hidden one.
+- **A root `Dockerfile`/`.dockerignore` were added, and building/running the image (via `podman`,
+  verified end to end — image build, container run, `curl` from outside the container, and a
+  non-root filesystem check) surfaced one real app bug and one packaging gotcha:**
+  - **`packages/server/src/index.ts` used to hardcode `app.listen({ port, host: "127.0.0.1" })`
+    with no env override**, unlike every other piece of server config (`PORT`,
+    `FLOWLATHE_DB_PATH`, `FLOWLATHE_FLOWS_DIR`, ...) which already reads from `process.env`. This
+    made the server unreachable from outside its own network namespace — Docker's port-forwarding
+    lands on the container's external interface, not loopback, so every request got a connection
+    reset regardless of `-p` mapping. Fixed generally, not just for Docker: `host` now reads
+    `process.env["HOST"] ?? "127.0.0.1"`, so bare-metal/local behavior is unchanged and the image
+    sets `HOST=0.0.0.0`.
+  - **The image installs pnpm via `npm install -g pnpm@10.6.5` in the base stage, deliberately NOT
+    `corepack prepare pnpm@... --activate`.** `corepack prepare` as root caches the downloaded
+    pnpm package under root's `$COREPACK_HOME` (`~/.cache/node/corepack`); the final stage's
+    `USER node` switch has a different `$HOME`, and corepack doesn't share that cache across
+    users, so the very first container start tried to hit the npm registry again for a package
+    that was already sitting in the image — silently doing a network round-trip at every fresh
+    container start (and hard-failing in a network-isolated deployment). A plain global npm
+    install has no such per-user cache and needs no network at runtime.
+  - **No native build toolchain (`python3`/`make`/`g++`) is needed at all, on Alpine included** —
+    `better-sqlite3@13.0.3` ships prebuilt binaries for `linuxmusl-{x64,arm64}` in its own npm
+    tarball, and the root `package.json`'s `pnpm.onlyBuiltDependencies: ["esbuild"]` already blocks
+    every other package's install/postinstall lifecycle script (including Playwright's browser
+    downloader) from running during `pnpm install` — so `node:22-alpine` needs nothing extra
+    layered on for this repo to install cleanly.
+  - **The image intentionally ships full TS source for every workspace package** (not just
+    `packages/server`), because that's how this repo already runs in production per the very
+    first entry in this file: `tsx` resolves workspace deps to raw `.ts` via pnpm symlinks, so
+    there is no `dist/` to copy for anything except `packages/web` (a real Vite build, copied in
+    from a separate `build` stage). Don't try to "slim down" the runtime stage by pruning
+    non-server package source — it's a load-bearing part of how the app runs, not build residue.
+- **PLAN-NETWORK-POSTURE.md added a `Host`-header allowlist (`packages/server/src/allowed-hosts.ts`),
+  the settled resolution of a prior audit's blocked "what's the posture" question.** The API stays
+  fully unauthenticated — this only closes DNS-rebinding-style attacks (a public page's script
+  sending a request that lands on the loopback-bound server with a rebound `Host`), it does **not**
+  add any form of auth. That half (FIX §4 option 2: a shared secret next to `credential.key`,
+  carried by cookie/query param since `EventSource` can't set custom headers) is deliberately
+  deferred, not implemented.
+  - **`0.0.0.0` must never be added to `DEFAULT_ALLOWED_HOSTS`.** It's a *bind* address, unrelated
+    to what a client may put in a `Host` header — browsers on Linux/macOS will route
+    `http://0.0.0.0:<port>` to a loopback-bound server (the "0.0.0.0 day" bug class), so
+    allowlisting it would reopen exactly the hole this module exists to close. The Dockerfile's
+    `HOST=0.0.0.0` is a completely separate knob (which interface the process binds inside its own
+    network namespace) — adding it to the Host allowlist "for symmetry" is the trap.
+  - **`normalizeHost` does real work, not cosmetic cleanup**: a trailing dot (`localhost.` is a
+    valid FQDN for `localhost`) and case (`LocalHost.`) are both real bypasses against a naive
+    `===`, and the match is exact-only — no `endsWith`, since that would match `evil-localhost`
+    against `localhost`.
+  - **The `onRequest` hook has no exemption list, by construction.** The Spotify OAuth callback
+    (the one route that has to stay reachable without the allowlist blocking it) needs none: its
+    own request's `Host` is whatever `SPOTIFY_REDIRECT_URI`'s hostname is, so `index.ts` just
+    pushes that hostname onto the allowlist instead of special-casing the route.
+  - **A worktree/branch created off `origin/main` can silently be missing recent local-only
+    commits.** Implementing this plan in a fresh worktree initially appeared to be missing both
+    the Dockerfile and `index.ts`'s `HOST` env-var read entirely — not a code regression, just the
+    worktree's base ref (`origin/main`) trailing the local `main` branch by an unpushed commit.
+    Fixed by rebasing the worktree branch onto local `main` before starting. Worth checking
+    `git branch -vv` for an "ahead" marker before trusting a fresh worktree matches what `git log`
+    on the main checkout shows.
 - **PLAN-EXECUTION-RETENTION.md landed execution-history retention and mark-and-sweep blob GC**
   (`deleteExecution`/`gcExecutions`/`gcFlowHistory` in `@flowlathe/persistence`, a boot+24h server
   timer, and `flowlathe gc`). Two things worth knowing before touching any of this:

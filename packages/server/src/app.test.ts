@@ -557,3 +557,80 @@ describe("step debugging", () => {
     expect(bFinished?.renderedPrompt).toContain("EDITED:");
   });
 });
+
+describe("host allowlist (PLAN-NETWORK-POSTURE.md)", () => {
+  it("allows a default inject (light-my-request's default Host, already loopback)", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/flows" });
+    expect(res.statusCode).not.toBe(403);
+  });
+
+  it("rejects a foreign Host header on an ordinary route", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/flows",
+      headers: { host: "evil.example:4310" },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("rejects a foreign Host header on the SSE events route before the handler hijacks the reply", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/executions/does-not-exist/events",
+      headers: { host: "evil.example:4310" },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("rejects a foreign Host on the SPA fallback instead of serving index.html", async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), "flowlathe-server-static-"));
+    await writeFile(join(staticRoot, "index.html"), "<html>spa</html>");
+    const staticOpened = openDb(":memory:");
+    runMigrations(staticOpened);
+    ensureDefaultMockProvider(staticOpened.db);
+    const staticApp = buildApp({
+      db: staticOpened.db,
+      credentialKey: randomBytes(32),
+      schedulerRegistry: new SchedulerRegistry(staticOpened.db, randomBytes(32)),
+      staticRoot,
+    });
+    try {
+      const res = await staticApp.inject({ method: "GET", url: "/", headers: { host: "evil.example" } });
+      expect(res.statusCode).toBe(403);
+    } finally {
+      await staticApp.close();
+      staticOpened.close();
+      await rm(staticRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("honors an explicit allowedHosts option", async () => {
+    const customOpened = openDb(":memory:");
+    runMigrations(customOpened);
+    ensureDefaultMockProvider(customOpened.db);
+    const customApp = buildApp({
+      db: customOpened.db,
+      credentialKey: randomBytes(32),
+      schedulerRegistry: new SchedulerRegistry(customOpened.db, randomBytes(32)),
+      allowedHosts: ["flowlathe.lan"],
+    });
+    try {
+      const allowed = await customApp.inject({
+        method: "GET",
+        url: "/api/flows",
+        headers: { host: "flowlathe.lan" },
+      });
+      expect(allowed.statusCode).not.toBe(403);
+
+      const stillDefaultDenied = await customApp.inject({
+        method: "GET",
+        url: "/api/flows",
+        headers: { host: "127.0.0.1" },
+      });
+      expect(stillDefaultDenied.statusCode).toBe(403);
+    } finally {
+      await customApp.close();
+      customOpened.close();
+    }
+  });
+});

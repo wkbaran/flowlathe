@@ -181,6 +181,36 @@ allowlist). `DISCORD_RECOVERY_WINDOW_SECONDS` (default 900) and `DISCORD_RECOVER
 50) bound the post-reconnect scan that recovers messages missed during a gateway drop or server
 restart; a message id is only ever admitted once, surviving a restart.
 
+## Deployment and network posture
+
+The flowlathe API is unauthenticated. Only loopback-equivalent exposure is supported — the server
+binds `127.0.0.1` by default (override with `HOST`, e.g. `HOST=0.0.0.0` inside a container), and
+every request is checked against a `Host`-header allowlist before any route runs, closing off
+DNS-rebinding-style attacks where a public web page's script sends a request that lands on this
+server with a rebound hostname. The allowlist defaults to `127.0.0.1`, `localhost`, and `::1`; set
+`FLOWLATHE_ALLOWED_HOSTS` to a comma-separated list to add hostnames to that default (an operator
+who deliberately publishes further, e.g. behind their own reverse proxy on a trusted LAN), or set
+`FLOWLATHE_ALLOWED_HOSTS_EXCLUSIVE=1` alongside it to replace the default outright instead of
+adding to it.
+
+**The allowlist is a routing check, not authentication.** Anything that can already reach the port
+and send a matching `Host` header has full API access — creating and overwriting flows, running
+them (invoking every configured provider and enabled plugin toolset), reading every execution's
+prompts and outputs, and registering triggers. Treat network reachability itself as the trust
+boundary: only run this on a machine or network you control.
+
+To run the published Docker image, publish to loopback explicitly:
+
+```bash
+docker run -p 127.0.0.1:4310:4310 -v flowlathe-data:/app/data -v flowlathe-flows:/app/flows flowlathe
+```
+
+Never `-p 4310:4310` without the loopback prefix — that publishes the port on every interface on
+the host. The image's `HOST=0.0.0.0` is unrelated to this and must stay as-is: it's a *bind*
+address inside the container's own network namespace, required for `-p` port-forwarding to reach
+it at all, not a statement about who else can connect — that boundary is the host-side `-p` publish
+address above.
+
 ## Flows as text
 
 A flow's source of truth is a `.flow` file — a small custom DSL, not a JSON blob in SQLite. This
