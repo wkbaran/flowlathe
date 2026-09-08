@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -77,5 +77,18 @@ describe("listGitHistory / graphAtGitCommit", () => {
   it("returns undefined for a commit that doesn't exist", async () => {
     git(["init", "-q"]);
     expect(graphAtGitCommit(dir, "git-chain", "deadbeef")).toBeUndefined();
+  });
+
+  it("rejects an option-injection sha instead of passing it to git show", async () => {
+    git(["init", "-q"]);
+    git(["config", "user.email", "test@example.com"]);
+    git(["config", "user.name", "Test"]);
+    await writeFile(join(dir, "git-chain.flow"), CHAIN);
+    git(["add", "git-chain.flow"]);
+    git(["commit", "-q", "-m", "first"]);
+
+    const outFile = join(dir, "OWNED");
+    expect(graphAtGitCommit(dir, "git-chain", `--output=${outFile}`)).toBeUndefined();
+    await expect(access(outFile)).rejects.toThrow();
   });
 });

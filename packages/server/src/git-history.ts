@@ -42,11 +42,18 @@ export function listGitHistory(dir: string, slug: string): GitCommitInfo[] {
     });
 }
 
+/** Legitimate values only ever come from `listGitHistory`'s `%H` output. Enforced before `sha`
+ *  reaches an argv slot: `execFileSync` blocks shell injection but not argument injection, and a
+ *  value starting with `-` is parsed by git as an option (e.g. `git show --output=<file>`), which
+ *  can write attacker-controlled content to an attacker-chosen path. */
+const SHA_PATTERN = /^[0-9a-fA-F]{4,40}$/;
+
 /** The flow's graph as of one commit, via `git show <sha>:<path>` — undefined if the commit or the
  *  file at that commit can't be read, or doesn't parse as a `.flow` file (a rename `--follow`
  *  couldn't resolve, a commit predating the DSL, etc). Fed straight into the same `diffGraphs`
  *  every other diff view uses — no separate git-specific diff logic. */
 export function graphAtGitCommit(dir: string, slug: string, sha: string): FlowGraph | undefined {
+  if (!SHA_PATTERN.test(sha)) return undefined;
   const text = git(dir, ["show", `${sha}:${slug}.flow`]);
   if (text === undefined) return undefined;
   try {
