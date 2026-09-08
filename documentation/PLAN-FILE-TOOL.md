@@ -5,6 +5,14 @@ Closes GitHub issue #2 ("Add file access tool — Include path sanitization and 
 Companion plan: `PLAN-SHELL-TOOL.md` (issue #1). The two share one new primitive and one real
 combined threat — see §9. Read both before implementing either.
 
+**Superseded by `PLAN-STATE-FILES.md`.** That plan folds file access into the flow State system
+instead: the flow author picks a specific file at design time (no arbitrary path from the model at
+all), and read/write become a `type: "file"` state entry with a mode, reusing this plan's §5.1
+`resolveWithinRoot` primitive verbatim (just relocated to `packages/runtime`). Left in place, not
+deleted — this remains a valid design if a genuinely generic "let a model browse an arbitrary
+directory at runtime" tool is ever wanted later; that use case is explicitly not covered by
+`PLAN-STATE-FILES.md`.
+
 ---
 
 ## 1. Problem
