@@ -20,4 +20,13 @@ describe("template", () => {
   it("throws when a required variable is missing", () => {
     expect(() => renderTemplate("{{missing}}", {})).toThrow(/missing template variable/);
   });
+
+  it("throws for a prototype-chain property name instead of resolving it off Object.prototype", () => {
+    expect(() => renderTemplate("{{toString}}", {})).toThrow(/missing template variable/);
+    expect(() => renderTemplate("{{constructor}}", {})).toThrow(/missing template variable/);
+  });
+
+  it("still renders normally when toString is a real own property", () => {
+    expect(renderTemplate("{{toString}}", { toString: "hello" })).toBe("hello");
+  });
 });

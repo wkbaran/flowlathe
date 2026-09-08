@@ -11,7 +11,7 @@ export function extractTemplateVars(template: string): string[] {
 
 export function renderTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(PLACEHOLDER, (_whole, name: string) => {
-    if (!(name in vars)) {
+    if (!Object.hasOwn(vars, name)) {
       throw new Error(`missing template variable "${name}"`);
     }
     return vars[name] ?? "";
