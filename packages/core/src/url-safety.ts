@@ -101,14 +101,22 @@ function stripBrackets(hostname: string): string {
 }
 
 function isPrivateOrInternalHost(hostname: string): boolean {
-  const bare = stripBrackets(hostname).toLowerCase();
+  // A trailing dot is a valid FQDN for the same host (`localhost.` === `localhost`) — a naive
+  // `===`/`endsWith` would let it slip past every check below. See allowed-hosts.ts's
+  // normalizeHost, which documents and closes the identical bypass for the Host-header allowlist;
+  // `core` can't import from `server`, so this is a deliberate re-implementation, kept in sync by
+  // hand rather than shared.
+  let bare = stripBrackets(hostname).toLowerCase();
+  if (bare.endsWith(".") && bare.length > 1) bare = bare.slice(0, -1);
 
   if (bare === "localhost" || bare.endsWith(".local") || bare.endsWith(".internal")) return true;
 
   const v4 = ipv4Octets(bare) ?? ipv4MappedOctets(bare);
   if (v4) {
     const [a, b] = v4;
+    if (a === 0) return true; // 0.0.0.0/8 — routes to loopback on Linux ("0.0.0.0 day")
     if (a === 10) return true; // RFC1918 10.0.0.0/8
+    if (a === 100 && b >= 64 && b <= 127) return true; // RFC6598 100.64.0.0/10 (CGNAT, incl. Tailscale)
     if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918 172.16.0.0/12
     if (a === 192 && b === 168) return true; // RFC1918 192.168.0.0/16
     if (a === 127) return true; // loopback 127.0.0.0/8
@@ -116,7 +124,9 @@ function isPrivateOrInternalHost(hostname: string): boolean {
     return false;
   }
 
-  // IPv6: loopback (::1), link-local (fe80::/10), unique-local (fc00::/7, i.e. fc00::-fdff::).
+  // IPv6: unspecified (::), loopback (::1), link-local (fe80::/10), unique-local (fc00::/7, i.e.
+  // fc00::-fdff::).
+  if (bare === "::") return true;
   if (bare === "::1") return true;
   if (/^fe[89ab][0-9a-f]:/.test(bare)) return true;
   if (/^f[cd][0-9a-f]{2}:/.test(bare) || /^f[cd]:/.test(bare)) return true;

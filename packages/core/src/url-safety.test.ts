@@ -56,6 +56,30 @@ describe("checkUrlSafety", () => {
     expect(checkUrlSafety("http://localhost/").ok).toBe(false);
   });
 
+  it("blocks 0.0.0.0 and its shorthand 0, which route to loopback on Linux", () => {
+    expect(checkUrlSafety("http://0.0.0.0/").ok).toBe(false);
+    expect(checkUrlSafety("http://0/").ok).toBe(false);
+  });
+
+  it("blocks the IPv6 unspecified address ::", () => {
+    expect(checkUrlSafety("http://[::]/").ok).toBe(false);
+  });
+
+  it("blocks an IPv4-mapped 0.0.0.0", () => {
+    expect(checkUrlSafety("http://[::ffff:0:0]/").ok).toBe(false);
+  });
+
+  it("blocks localhost. (trailing dot is a valid FQDN for the same host)", () => {
+    expect(checkUrlSafety("http://localhost./").ok).toBe(false);
+  });
+
+  it("blocks the RFC6598 CGNAT range (100.64.0.0/10, e.g. Tailscale addresses)", () => {
+    expect(checkUrlSafety("http://100.64.1.1/").ok).toBe(false);
+    expect(checkUrlSafety("http://100.127.255.255/").ok).toBe(false);
+    expect(checkUrlSafety("http://100.63.255.255/").ok).toBe(true);
+    expect(checkUrlSafety("http://100.128.0.0/").ok).toBe(true);
+  });
+
   it("allows a private address when allowPrivate is set", () => {
     expect(checkUrlSafety("http://192.168.1.1/", { allowPrivate: true }).ok).toBe(true);
   });
