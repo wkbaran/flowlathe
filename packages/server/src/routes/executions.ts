@@ -1,10 +1,12 @@
 import type { ServerResponse } from "node:http";
 import { diffGraphs, isSemanticChange, type Scheduler, type ToolRegistration } from "@flowlathe/core";
 import {
+  getBranch,
   getFlow,
   type Db,
   getExecution,
   getFlowVersionRow,
+  getSnapshot,
   getStateSnapshot,
   listBranches,
   listResponses,
@@ -28,6 +30,17 @@ export interface ExecutionRouteDeps {
   scheduler: Scheduler;
   pluginToolsets?: ToolRegistration[] | undefined;
   flowsDir: string;
+}
+
+/** There is no auth boundary today — this is a client-bug guard, not an authorization control
+ *  (see the handoff doc's "Execution routes don't verify resource ownership" item). Without it, a
+ *  `branchId`/`snapshotId` for a *different* execution than the one named in the URL silently
+ *  operates on the wrong branch instead of 404ing. Returns the branch on success so callers don't
+ *  re-fetch it. */
+function branchOwnedByExecution(db: Db, branchId: string, executionId: string): ReturnType<typeof getBranch> | undefined {
+  const branch = getBranch(db, branchId);
+  if (!branch || branch.executionId !== executionId) return undefined;
+  return branch;
 }
 
 export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRouteDeps): void {
@@ -68,6 +81,9 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     "/api/executions/:id/snapshots",
     async (request, reply) => {
       if (!request.query.branchId) return reply.code(400).send({ error: "branchId query param is required" });
+      if (!branchOwnedByExecution(db, request.query.branchId, request.params.id)) {
+        return reply.code(404).send({ error: "branch not found" });
+      }
       return listSnapshotsForBranch(db, request.query.branchId);
     },
   );
@@ -76,6 +92,9 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     "/api/executions/:id/state",
     async (request, reply) => {
       if (!request.query.branchId) return reply.code(400).send({ error: "branchId query param is required" });
+      if (!branchOwnedByExecution(db, request.query.branchId, request.params.id)) {
+        return reply.code(404).send({ error: "branch not found" });
+      }
       return getStateSnapshot(db, request.query.branchId);
     },
   );
@@ -84,6 +103,9 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     "/api/executions/:id/state-lineage",
     async (request, reply) => {
       if (!request.query.branchId) return reply.code(400).send({ error: "branchId query param is required" });
+      if (!branchOwnedByExecution(db, request.query.branchId, request.params.id)) {
+        return reply.code(404).send({ error: "branch not found" });
+      }
       return listStateLineage(db, request.query.branchId);
     },
   );
@@ -93,6 +115,9 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
     const execution = getExecution(db, request.params.id);
     if (!execution) return reply.code(404).send({ error: "execution not found" });
+    if (!branchOwnedByExecution(db, parsed.data.branchId, request.params.id)) {
+      return reply.code(404).send({ error: "branch not found" });
+    }
     const graph = getLatestGraphForFlowVersionFileAware(db, flowsDir, execution.flowVersionId);
     if (!graph) return reply.code(500).send({ error: "flow version graph not found" });
 
@@ -115,6 +140,10 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
   app.post<{ Params: { id: string } }>("/api/executions/:id/step-back", async (request, reply) => {
     const parsed = StepBackBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
+    const snapshot = getSnapshot(db, parsed.data.snapshotId);
+    if (!snapshot || !branchOwnedByExecution(db, snapshot.branchId, request.params.id)) {
+      return reply.code(404).send({ error: "snapshot not found" });
+    }
     try {
       return stepBack(db, parsed.data.snapshotId, parsed.data.label);
     } catch (err) {
