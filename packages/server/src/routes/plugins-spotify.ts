@@ -10,12 +10,21 @@ export interface SpotifyRouteDeps {
   config: SpotifyOAuthConfig | undefined;
 }
 
-interface PendingAuth {
+export interface PendingAuth {
   verifier: string;
   createdAt: number;
 }
 
-const PENDING_TTL_MS = 10 * 60 * 1000;
+export const PENDING_TTL_MS = 10 * 60 * 1000;
+
+/** Deletes every entry older than `PENDING_TTL_MS` as of `now`. Exported standalone (not just
+ *  inlined into the route closure) so a test can exercise sweep behavior directly against a map,
+ *  without needing to poke at `registerSpotifyPluginRoutes`'s private state through HTTP. */
+export function sweepExpiredPending(pending: Map<string, PendingAuth>, now: number): void {
+  for (const [state, entry] of pending) {
+    if (now - entry.createdAt > PENDING_TTL_MS) pending.delete(state);
+  }
+}
 
 export function registerSpotifyPluginRoutes(app: FastifyInstance, deps: SpotifyRouteDeps): void {
   const { db, credentialKey, config } = deps;
@@ -32,6 +41,11 @@ export function registerSpotifyPluginRoutes(app: FastifyInstance, deps: SpotifyR
 
   app.get("/api/plugins/spotify/oauth/start", async (_request, reply) => {
     if (!config) return reply.code(400).send({ error: "Spotify plugin is not configured (set SPOTIFY_CLIENT_ID)" });
+    // Called on every start, not on a timer — a timer would need clearing on shutdown and this
+    // server already has enough lifecycle to manage. `/oauth/start` is unauthenticated, so
+    // without this an attacker (or a user double-clicking Connect) could grow `pending` without
+    // bound; entries are otherwise only ever removed by a matching callback.
+    sweepExpiredPending(pending, Date.now());
     const pkce = generatePkcePair();
     const state = randomUUID();
     pending.set(state, { verifier: pkce.verifier, createdAt: Date.now() });

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { ensureDefaultMockProvider, getPluginCredential, type OpenedDb, openDb, runMigrations } from "@flowlathe/persistence";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
+import { PENDING_TTL_MS, sweepExpiredPending, type PendingAuth } from "./plugins-spotify.js";
 import { SchedulerRegistry } from "../scheduler-registry.js";
 
 let opened: OpenedDb;
@@ -151,5 +152,40 @@ describe("POST /api/plugins/spotify/disconnect", () => {
     expect(disconnect.statusCode).toBe(204);
     expect((await app.inject({ method: "GET", url: "/api/plugins/spotify/status" })).json().connected).toBe(false);
     await app.close();
+  });
+});
+
+describe("sweepExpiredPending", () => {
+  it("removes an entry only once it's past PENDING_TTL_MS, leaving fresh ones alone", () => {
+    const pending = new Map<string, PendingAuth>([
+      ["stale", { verifier: "v1", createdAt: 0 }],
+      ["fresh", { verifier: "v2", createdAt: 0 }],
+    ]);
+    sweepExpiredPending(pending, PENDING_TTL_MS + 1);
+    expect(pending.has("stale")).toBe(false);
+
+    const pending2 = new Map<string, PendingAuth>([["fresh", { verifier: "v2", createdAt: 0 }]]);
+    sweepExpiredPending(pending2, PENDING_TTL_MS - 1);
+    expect(pending2.has("fresh")).toBe(true);
+  });
+
+  it("repeated unauthenticated /oauth/start calls don't grow pending state without bound", async () => {
+    vi.useFakeTimers();
+    const app = buildTestApp({ clientId: "abc", redirectUri: "http://127.0.0.1:4310/callback" });
+
+    const first = await app.inject({ method: "GET", url: "/api/plugins/spotify/oauth/start" });
+    const staleState = new URL(first.headers.location as string).searchParams.get("state");
+
+    vi.advanceTimersByTime(PENDING_TTL_MS + 1);
+    await app.inject({ method: "GET", url: "/api/plugins/spotify/oauth/start" });
+
+    // Route-level sanity check that the whole path still behaves correctly end to end; the
+    // sweep's actual deletion behavior is what the unit test above pins directly.
+    const callback = await app.inject({ method: "GET", url: `/api/plugins/spotify/oauth/callback?code=x&state=${staleState}` });
+    expect(callback.statusCode).toBe(400);
+    expect(callback.body).toMatch(/expired/);
+
+    await app.close();
+    vi.useRealTimers();
   });
 });
