@@ -47,6 +47,43 @@ describe("OpenAiCompatAdapter", () => {
     );
   });
 
+  it("skips an unparseable data line instead of throwing a bare SyntaxError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+          "data: {not valid json\n\n",
+          'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    );
+    const adapter = new OpenAiCompatAdapter({ baseUrl: "http://127.0.0.1:1234/v1" });
+    const result = await adapter.call({ providerId: "p", modelId: "m", nodeId: "n1", prompt: "hi" });
+    expect(result.content).toBe("Hello");
+    expect(result.finishReason).toBe("stop");
+  });
+
+  it("throws a ProviderCallError once accumulated content exceeds the length ceiling", async () => {
+    const bigChunk = "x".repeat(400_000);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse(
+          Array.from(
+            { length: 4 },
+            () => `data: ${JSON.stringify({ choices: [{ delta: { content: bigChunk } }] })}\n\n`,
+          ),
+        ),
+      ),
+    );
+    const adapter = new OpenAiCompatAdapter({ baseUrl: "http://127.0.0.1:1234/v1" });
+    await expect(
+      adapter.call({ providerId: "p", modelId: "m", nodeId: "n1", prompt: "hi" }),
+    ).rejects.toThrow(/exceeded/);
+  });
+
   it("throws with the response body on a non-ok status", async () => {
     vi.stubGlobal(
       "fetch",

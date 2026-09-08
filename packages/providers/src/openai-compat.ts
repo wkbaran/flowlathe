@@ -7,6 +7,10 @@ interface OpenAiChunk {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
+/** A hard backstop against a runaway or malicious server never sending finish_reason/[DONE] —
+ *  not a context-budget limit (that's the Gate node's job), just "this must eventually stop." */
+const MAX_CONTENT_CHARS = 1_000_000;
+
 export interface OpenAiCompatAdapterOptions {
   baseUrl: string;
   apiKey?: string | undefined;
@@ -69,11 +73,25 @@ export class OpenAiCompatAdapter implements ProviderAdapter {
       for (const line of lines) {
         const payload = line.startsWith("data:") ? line.slice(5).trim() : "";
         if (!payload || payload === "[DONE]") continue;
-        const chunk = JSON.parse(payload) as OpenAiChunk;
+        // A malformed chunk from a local server is skipped, not fatal — the stream as a whole
+        // may still finish correctly. This deliberately does NOT throw ProviderCallError, unlike
+        // the content-length ceiling below: dropping one bad chunk's tokens is lower-hazard than
+        // aborting an otherwise-good response, whereas an unbounded accumulator is a real backstop
+        // this codebase's "nothing unbounded reaches a prompt" convention requires (see
+        // PLAN-SANITIZATION-BOUNDARY.md's layer-2 cap for the same reasoning applied elsewhere).
+        let chunk: OpenAiChunk;
+        try {
+          chunk = JSON.parse(payload) as OpenAiChunk;
+        } catch {
+          continue;
+        }
         const choice = chunk.choices?.[0];
         if (choice?.delta?.content) {
           content += choice.delta.content;
           req.onToken?.(choice.delta.content);
+          if (content.length > MAX_CONTENT_CHARS) {
+            throw new ProviderCallError(`openai-compat response exceeded ${MAX_CONTENT_CHARS} accumulated characters`);
+          }
         }
         if (choice?.finish_reason) finishReason = choice.finish_reason;
         if (chunk.usage) {
