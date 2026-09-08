@@ -2,6 +2,20 @@ import { retryAfterMsFromHeader } from "@flowlathe/providers";
 
 export class DiscordError extends Error {}
 
+/** Every id this client interpolates into a URL path (channel/message ids) must match this
+ *  charset. A real Discord snowflake is all-digits, but tests and other callers use non-numeric
+ *  ids ("c1", "msg-1", ...), so this isn't a snowflake check — it's the minimum needed to make
+ *  path-segment injection impossible: no `/`, `.`, `%`, or `\`, which is exactly what undici's URL
+ *  normalization needs to turn a `messageId` like `../../../../guilds/999/members/888/roles` into
+ *  a request against a completely different, unintended Discord API endpoint (bypassing the
+ *  channel allowlist this whole toolset's security model rests on). */
+const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+function requireId(id: string, label: string): string {
+  if (!ID_PATTERN.test(id)) throw new DiscordError(`invalid Discord ${label}: ${JSON.stringify(id)}`);
+  return id;
+}
+
 const API_BASE = "https://discord.com/api/v10";
 /** Discord's hard per-message limit is 2000 characters; chunk at 1900 for headroom (hermes-agent's
  *  figure). */
@@ -112,7 +126,7 @@ export class DiscordClient {
         if (retryMs === undefined) {
           try {
             const parsed = JSON.parse(text) as { retry_after?: number };
-            if (typeof parsed.retry_after === "number") retryMs = parsed.retry_after * 1000;
+            if (typeof parsed.retry_after === "number") retryMs = retryAfterMsFromHeader(String(parsed.retry_after));
           } catch {
             // fall through to the default backoff
           }
@@ -131,6 +145,8 @@ export class DiscordClient {
   }
 
   async sendMessage(channelId: string, content: string, replyToMessageId?: string): Promise<{ messageIds: string[] }> {
+    requireId(channelId, "channel id");
+    if (replyToMessageId) requireId(replyToMessageId, "message id");
     const chunks = chunkMessageContent(content);
     const messageIds: string[] = [];
     for (let i = 0; i < chunks.length; i++) {
@@ -147,6 +163,9 @@ export class DiscordClient {
    *  `before` (reading recent history backward); recovery passes `after` (reading forward from a
    *  cursor). Passing both is nonsensical and left to the caller to avoid. */
   async readMessages(channelId: string, opts: { limit?: number; before?: string; after?: string } = {}): Promise<DiscordMessage[]> {
+    requireId(channelId, "channel id");
+    if (opts.before) requireId(opts.before, "message id");
+    if (opts.after) requireId(opts.after, "message id");
     const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, opts.limit ?? 20))) });
     if (opts.before) params.set("before", opts.before);
     if (opts.after) params.set("after", opts.after);
@@ -154,6 +173,8 @@ export class DiscordClient {
   }
 
   async react(channelId: string, messageId: string, emoji: string): Promise<void> {
+    requireId(channelId, "channel id");
+    requireId(messageId, "message id");
     await this.request<void>("PUT", `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`);
   }
 }

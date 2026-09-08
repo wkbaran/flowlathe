@@ -147,6 +147,39 @@ describe("DiscordClient", () => {
     expect(seenUrl?.pathname).toContain("/channels/c1/messages/m1/reactions/");
   });
 
+  it("rejects a path-traversal messageId before making any request", async () => {
+    let called = false;
+    const fetchImpl = fakeFetch(() => {
+      called = true;
+      return new Response(null, { status: 204 });
+    });
+    const client = new DiscordClient({ botToken: "t", fetchImpl });
+    await expect(client.react("c1", "../../../../guilds/999/members/888/roles", "👍")).rejects.toThrow(/invalid Discord message id/);
+    expect(called).toBe(false);
+  });
+
+  it("rejects a path-traversal channelId before making any request", async () => {
+    let called = false;
+    const fetchImpl = fakeFetch(() => {
+      called = true;
+      return new Response(null, { status: 204 });
+    });
+    const client = new DiscordClient({ botToken: "t", fetchImpl });
+    await expect(client.react("../secrets", "m1", "👍")).rejects.toThrow(/invalid Discord channel id/);
+    expect(called).toBe(false);
+  });
+
+  it("rejects a path-traversal replyToMessageId before making any request", async () => {
+    let called = false;
+    const fetchImpl = fakeFetch(() => {
+      called = true;
+      return new Response(JSON.stringify({ id: "m1" }), { status: 200 });
+    });
+    const client = new DiscordClient({ botToken: "t", fetchImpl });
+    await expect(client.sendMessage("c1", "hi", "../../oops")).rejects.toThrow(/invalid Discord message id/);
+    expect(called).toBe(false);
+  });
+
   it("throws a clear error when the fetch itself fails", async () => {
     const fetchImpl = (async () => {
       throw new TypeError("connect ECONNREFUSED");
