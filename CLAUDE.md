@@ -220,7 +220,9 @@ rediscover them the hard way.
   gaining a genuine `await maybeCompact(...)` on every call was enough extra latency to expose it
   (surfaced as node output containing its own prior output, e.g. `"user: X\nassistant: X\nuser: X"`).
   Fixed by also excluding `this.running` from `remaining()`.
-- **Two Playwright e2e gotchas found writing the Gate spec:** (1) `.fill()` on a React-controlled
+- **Two Playwright e2e gotchas found during manual/MCP-driven exploration of the Gate feature**
+  (no Gate spec was ever actually committed — see the later note on plugin-shaped e2e coverage):
+  (1) `.fill()` on a React-controlled
   `type="number"` MUI field is flaky specifically under fast/no-delay automation (passes reliably
   via a human or MCP-paced session, same class of issue as the stale-DOM entry above) — use
   `.pressSequentially()` for numeric fields instead. (2) Default node-add positions are spaced far
@@ -1166,3 +1168,41 @@ rediscover them the hard way.
     legitimate compiler change, and the existing `toContain` assertions already cover
     shape-specific details. Expect to run with `-u` and review the diff on any future intentional
     change to `compile-graph.ts`'s emitted output.
+- **HANDOFF-QUICK-FIXES.md's ten bounded fixes landed (a security/bug audit's findings that didn't
+  need their own planning session — see `git log` for the individual commits).** A few things
+  worth knowing if this area comes up again:
+  - **`execFileSync`/undici's own URL parsing quietly does most of the hard work, and it's easy to
+    assume it does all of it.** Two of the ten bugs were exactly this shape: `git-history.ts`'s
+    `git show <sha>:<path>` was vulnerable to *argument* injection (a `sha` starting with `-` is
+    parsed by git as an option, e.g. `--output=<file>`) even though `execFileSync` already blocks
+    *shell* injection; `DiscordClient.react`'s `messageId` was vulnerable to *path-traversal* via
+    `..` segments even though it never touches a filesystem — undici normalizes `..` during URL
+    parsing the same way a browser would, silently retargeting the request at a different Discord
+    API endpoint entirely. Neither class shows up unless you specifically ask "what if this
+    argument starts with `-` / contains `/../`," since the obvious injection vector (shell
+    metacharacters, raw `..` in a file path) was already closed.
+  - **`isPrivateOrInternalHost` (`packages/core/src/url-safety.ts`) and `normalizeHost`
+    (`packages/server/src/allowed-hosts.ts`) are two independent, deliberately duplicated
+    implementations of "is this hostname trying to reach something private," not a shared
+    primitive** — `core` can't import from `server` (isomorphism), so the SSRF gaps this audit
+    found (`0.0.0.0`, `::`, IPv4-mapped `0.0.0.0`, a trailing-dot FQDN, the RFC6598 CGNAT range)
+    had to be independently re-derived and fixed in `url-safety.ts` even though
+    `allowed-hosts.ts` already had correct trailing-dot handling and correct `0.0.0.0` reasoning
+    to copy from. If either file's blocklist changes again, check whether the other one has
+    drifted.
+  - **A prototype-chain bug in `renderTemplate`** (`name in vars` instead of
+    `Object.hasOwn(vars, name)`) **was reachable through ordinary product behavior, not just a
+    synthetic API call** — a node declaring a port literally named `toString`/`constructor` that
+    resolves to `never` (an untaken router branch) hits exactly this path, since `inputs` then
+    genuinely lacks an own property for that name. One-character fix, but it silently rendered
+    native-code source into a prompt instead of throwing the intended "missing template variable"
+    error, and this file is consumed by every node kind in both engines — see the existing
+    core-isomorphism entry above for why a change here always needs the full `pnpm test` run, not
+    just `@flowlathe/core`'s own suite.
+  - **A `Retry-After`/rate-limit value has two independent parse paths in `DiscordClient` — the
+    header, and a JSON-body `retry_after` fallback — and only one of them went through the shared
+    `retryAfterMsFromHeader` clamp.** Discord always includes `retry_after` in a 429 body, but the
+    header isn't guaranteed on every route, so both paths are live in practice; fixing an upper
+    bound in the shared parser alone would have left the body fallback able to stall a call for
+    however long a hostile/broken `Retry-After` value said to wait. Route every such fallback
+    through the same shared parser rather than reimplementing the arithmetic inline.
