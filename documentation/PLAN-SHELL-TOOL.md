@@ -536,21 +536,22 @@ its users type shell; flowlathe's caller is a model emitting JSON, so it can ref
 - **A `shell` node kind** (L9). A deterministic, wired-into-the-graph command node is a coherent
   follow-on mirroring `search`/`fetch`, and it needs the whole NodeKind checklist plus a parity
   stub for subprocesses (§5.4).
-- **Human-in-the-loop approval.** flowlathe already has every part except one:
-  `packages/nodes/pause` and `user-input` suspend an activation, `createSuspendRegistry` parks it,
-  and `POST /api/executions/:id/resume` releases it. A tool handler cannot reach any of it,
-  because `ToolInvokeMeta` carries only `{activationKey, signal}`. Adding
-  `ToolInvokeMeta.requestApproval?: (summary: string) => Promise<boolean>`, wired in
-  `createToolRegistry` from the host's `suspend`, would give an approval gate for
-  `SHELL_TOOL_APPROVAL_REQUIRED` commands with no new UI concepts — the pause panel already
-  exists. Real, bounded, and out of scope here; note that `createSuspendRegistry` already rejects
-  pending suspends on cancellation, so this composes with PLAN-CANCELLATION rather than
-  reintroducing a hang.
+- **Human-in-the-loop approval.** Built separately in `PLAN-TOOL-APPROVAL.md`: an optional,
+  default-off gate (`FLOWLATHE_TOOL_APPROVAL`) that suspends a gated toolset's calls for an
+  operator decision, using the same `pause`/`user-input` suspend machinery this bullet originally
+  proposed extending `ToolInvokeMeta` for — that plan found a decorator over the *built*
+  `ToolRegistry` (applied only in `host-builder.ts`) reaches the same effect with no
+  `ToolInvokeMeta` change at all. It is explicitly a bootstrapping/debugging aid for a
+  newly-enabled toolset, never a substitute for L1–L10 above — enabling it does not change any
+  allowlist, sanitization, or sandboxing behavior in this plan.
 - **An audit trail.** Every `shell_exec` invocation ought to appear in the run log as a
   first-class event. It cannot: tool handlers have no `emit`. `Run.emit` exists (added for
-  `node_skipped`) but is not reachable from `ToolInvokeMeta`. Same one-field fix as above; same
-  deferral. `console.log` at the server is the v1 substitute — do it, prefixed `[shell]`, with
-  the command and argv but never the environment.
+  `node_skipped`) but is not reachable from `ToolInvokeMeta`. `console.log` at the server is the
+  v1 substitute — do it, prefixed `[shell]`, with the command and argv but never the environment.
+  (`PLAN-TOOL-APPROVAL.md`'s gate incidentally makes a *gated* call's `node_suspended` event a
+  visible, persisted log line naming the tool — but only while gating is on for `shell`, and it
+  records only that the call was attempted, not its result. This is not the audit trail this
+  bullet describes and does not close it.)
 - **rlimits, cgroups, seccomp, user switching, filesystem overlays** (L6). Delegated to the
   wrapper.
 - **Windows** (L10).
@@ -633,8 +634,8 @@ Add one entry, in this file's established voice — the surprises, not the summa
   `scrubUntrustedText` + a manual slice, never `sanitizeUntrustedText(…, maxLength)` (which would
   cut the marker off).
 - No parity fixture and no e2e spec, and why (§5.4/§5.5) — tracked gaps.
-- The approval-gate and audit-event deferrals, naming `ToolInvokeMeta` as the one field-width
-  change either would need (§8).
+- The approval gate is built separately in `PLAN-TOOL-APPROVAL.md`, as a decorator over the built
+  `ToolRegistry` — no `ToolInvokeMeta` change needed. The audit-event deferral remains open (§8).
 
 ## 11. Definition of done
 

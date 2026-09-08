@@ -413,13 +413,18 @@ Step 1 is shared with `PLAN-SHELL-TOOL.md` (§9.1) and is the only step touching
 - **Multiple roots.** One root, one mode. Hermes's `HERMES_WRITE_SAFE_ROOT` is `os.pathsep`-split
   and multi-valued; that generality is only worth it once someone asks.
 - **Per-path approval tiers.** Hermes gates `~/.ssh/config` behind a human prompt rather than a
-  hard deny. flowlathe cannot express this today: a tool handler cannot reach `host.suspend`
-  (fact 8), even though `packages/nodes/pause`, `createSuspendRegistry` and
-  `POST /api/executions/:id/resume` already implement every other part. Adding
-  `ToolInvokeMeta.requestApproval?: (summary) => Promise<boolean>` would enable it here *and* for
-  the shell tool with no new UI concepts — the same one-field change both plans defer.
+  hard deny. Built separately, generically (not per-path, not fs-specific), in
+  `PLAN-TOOL-APPROVAL.md`: an optional, default-off, toolset-scoped gate
+  (`FLOWLATHE_TOOL_APPROVAL`) that reuses `packages/nodes/pause`'s suspend machinery via a
+  decorator over the *built* `ToolRegistry`, with no `ToolInvokeMeta` change needed. A
+  bootstrapping/debugging aid only — the root/mode/denylist design above (L1–L10) remains the
+  permanent boundary regardless of whether the gate is ever turned on.
 - **An audit trail.** Tool handlers have no `emit`, so file access does not appear in the run log.
-  Same deferral; `console.log`-prefixed `[fs]` lines at the server are the v1 substitute.
+  `console.log`-prefixed `[fs]` lines at the server are the v1 substitute. (`PLAN-TOOL-APPROVAL.md`'s
+  gate incidentally makes a *gated* call's `node_suspended` event a visible, persisted log line
+  naming the tool — but only while gating is on for `fs`, and it records only that the call was
+  attempted, not its result. This is not the audit trail this bullet describes and does not close
+  it.)
 - **A `file` node kind** (L9).
 - **Windows path semantics** (drive letters, UNC, `\\?\`, case-insensitive containment). The repo
   targets WSL2/Linux and an Alpine container; `resolveWithinRoot`'s containment comparison is
@@ -492,8 +497,9 @@ Add one entry, in this file's established voice — the surprises, not the summa
 - `fs_list` sanitizes **filenames**, not just contents — a filename is attacker-controlled text
   reaching a prompt.
 - No parity fixture and no e2e spec, and why (§6.5) — tracked gaps.
-- The approval-tier and audit-event deferrals, naming `ToolInvokeMeta` as the one field-width
-  change either would need (§8) — shared with the shell plan.
+- The approval-tier gate is built separately in `PLAN-TOOL-APPROVAL.md`, as a decorator over the
+  built `ToolRegistry` — no `ToolInvokeMeta` change needed, shared with the shell plan. The
+  audit-event deferral remains open (§8).
 
 ## 11. Definition of done
 
