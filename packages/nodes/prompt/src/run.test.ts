@@ -149,6 +149,29 @@ describe("runPrompt", () => {
     expect(result.output).toBe("done");
   });
 
+  it("stops a model looping on tool calls forever, instead of an infinite loop", async () => {
+    const { ctx } = fakeCtx();
+    let submitCount = 0;
+    ctx.scheduler.submit = async () => {
+      submitCount++;
+      return {
+        content: "",
+        finishReason: "tool_calls",
+        toolCalls: [{ id: `call_${submitCount}`, name: "write_state", args: { entry: "notes", value: submitCount } }],
+      };
+    };
+    await expect(
+      runPrompt(
+        ctx,
+        { id: "a", template: "hi", providerId: "mock", modelId: "m", enableStateTools: true, enabledToolsets: [] },
+        {},
+      ),
+    ).rejects.toThrow(/exceeded 4 tool-call rounds/);
+    // One submit per round from 0 through MAX_TOOL_ROUNDS inclusive, then the throw — proves this
+    // terminates at a bounded round count rather than looping forever.
+    expect(submitCount).toBe(5);
+  });
+
   it("accumulates its own conversation across repeated calls (e.g. a Loop body)", async () => {
     const { ctx } = fakeCtx();
     const spec = {
