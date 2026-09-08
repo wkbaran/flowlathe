@@ -9,6 +9,14 @@ describe("TokenBucket", () => {
     for (let i = 0; i < 60; i++) {
       await bucket.consume(1);
     }
+    // The bucket starts full at capacity — one more token must block rather than being granted
+    // for free, or this whole test would pass even with an unlimited (non-gating) bucket.
+    let resolved = false;
+    void bucket.consume(1).then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
   });
 
   it("blocks until the clock advances enough to refill", async () => {
@@ -30,12 +38,24 @@ describe("TokenBucket", () => {
     expect(resolved).toBe(true);
   });
 
-  it("refills proportionally to elapsed time, not just unblocking on any advance", async () => {
+  it("refills proportionally to elapsed time, not by resetting to full capacity on any advance", async () => {
     const clock = new VirtualClock();
     const bucket = new TokenBucket({ ratePerMinute: 600, clock }); // 10 tokens/sec
-    await bucket.consume(600);
+    await bucket.consume(600); // drain to empty
 
-    clock.advance(1000); // +10 tokens
-    await bucket.consume(10); // exactly enough, should not block
+    clock.advance(300); // should refill exactly 3 tokens, nowhere near full capacity (600)
+
+    // A bucket that (incorrectly) reset to full on any elapsed time would grant this immediately;
+    // the real, proportional refill only has 3 tokens, so requesting 4 must block.
+    let resolved = false;
+    const promise = bucket.consume(4).then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    clock.advance(100); // +1 more token = 4 total, exactly enough
+    await promise;
+    expect(resolved).toBe(true);
   });
 });
