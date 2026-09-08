@@ -15,10 +15,15 @@ import type { SchedulerRegistry } from "../scheduler-registry.js";
 
 const ProviderKindSchema = z.enum(["mock", "ollama", "openai-compat"]);
 
+/** `OpenAiCompatAdapter` sends the decrypted API key as a bearer token to whatever this points at
+ *  — restrict to http(s) so this can never be used to reach a non-network scheme. Uses the
+ *  top-level `z.url()`, not the deprecated chained `.string().url()` (this repo pins zod@4.5.4). */
+const BaseUrlSchema = z.url({ protocol: /^https?$/ });
+
 const CreateProviderBody = z.object({
   name: z.string().min(1),
   kind: ProviderKindSchema,
-  baseUrl: z.string().optional(),
+  baseUrl: BaseUrlSchema.optional(),
   secret: z.string().optional(),
   maxParallel: z.number().int().positive().optional(),
   rpm: z.number().int().positive().optional(),
