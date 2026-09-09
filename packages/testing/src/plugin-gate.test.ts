@@ -65,6 +65,43 @@ describe("compiled-script plugin dependency gate", () => {
     15_000,
   );
 
+  describe("file-backed state entries (PLAN-STATE-FILES.md)", () => {
+    it(
+      "exits non-zero with a clear message for a flow declaring a type:\"file\" state entry, without touching the scheduler",
+      () => {
+        const graph: FlowGraph = {
+          nodes: [
+            { id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "notes: {{notes}}", providerId: "mock", modelId: "m" } },
+          ],
+          edges: [],
+          state: [{ name: "notes", type: "file", merge: "replace", fileMode: "read-write", filePath: "notes.md" }],
+        };
+        const { status, stderr } = runCompiled(graph);
+        expect(status).toBe(1);
+        expect(stderr).toContain("notes");
+        expect(stderr).toContain("not supported in exported scripts");
+      },
+      15_000,
+    );
+
+    it(
+      "runs normally when the only state entries are non-file (the ambient-binding mechanism itself works standalone)",
+      () => {
+        const graph: FlowGraph = {
+          nodes: [
+            { id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "notes: {{notes}}", providerId: "mock", modelId: "m" } },
+          ],
+          edges: [],
+          state: [{ name: "notes", type: "string", merge: "replace", initial: "hello" }],
+        };
+        const { status, stderr } = runCompiled(graph);
+        expect(status).toBe(0);
+        expect(stderr).toBe("");
+      },
+      15_000,
+    );
+  });
+
   describe("a toolset with a standalone reconstruction", () => {
     let server: Server;
     let baseUrl: string;

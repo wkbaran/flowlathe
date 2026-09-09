@@ -176,6 +176,7 @@ export function validateGraph(graph: FlowGraph, opts: ValidationOptions = {}): s
       set.add(port);
       inRegionTargetPorts.set(edge.target, set);
     }
+    const stateNames = new Set(graph.state.map((d) => d.name));
     for (const node of graph.nodes) {
       const owner = node.parentId;
       const ownerNode = owner !== undefined ? nodesById.get(owner) : undefined;
@@ -185,8 +186,29 @@ export function validateGraph(graph: FlowGraph, opts: ValidationOptions = {}): s
       for (const port of declaredPorts) {
         if (wired.has(port)) continue;
         if (injectedPort && port === injectedPort) continue; // the injected exception
+        // PLAN-STATE-FILES.md L8/L9: a Prompt node's template variable with no wired edge, whose
+        // name matches a declared state entry, is an ambient binding — not a port that needs an
+        // edge. Scoped to Prompt nodes only; Loop/Map's own template ports get no such exception.
+        if (node.type === "prompt" && stateNames.has(port)) continue;
         problems.push(`node "${node.id}" declares input port "${port}" with no incoming edge`);
       }
+    }
+  }
+
+  // R8 (PLAN-STATE-FILES.md): a type:"file" state decl must carry filePath/fileMode, and its
+  // merge rule must be one file operations actually supports. `StateDeclSchema`'s own
+  // `superRefine` already enforces this for every caller that goes through `parseFlowGraph`, but
+  // a `.flow` file synced straight off disk (`flow-store.ts`'s `loadFlowFile`/`syncFlowFile`) or
+  // pasted via `/api/flows/import` is parsed by `@flowlathe/dsl` directly and never re-validated
+  // through that schema — without this rule, a malformed decl would reach `createStateStore` at
+  // first run instead of failing clearly here, at every `validateGraph` call site (the
+  // interpreter's `GraphEngine` constructor, the compiler, and the flow routes alike).
+  for (const decl of graph.state) {
+    if (decl.type !== "file") continue;
+    if (!decl.filePath) problems.push(`state entry "${decl.name}" has type "file" but no filePath`);
+    if (!decl.fileMode) problems.push(`state entry "${decl.name}" has type "file" but no fileMode`);
+    if (decl.merge !== "replace" && decl.merge !== "append") {
+      problems.push(`state entry "${decl.name}" has type "file" but merge "${decl.merge}" — file entries only support "replace"/"append"`);
     }
   }
 

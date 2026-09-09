@@ -1,8 +1,10 @@
 import {
+  FileStateModeSchema,
   isNodeKind,
   MergeRuleSchema,
   NODE_KINDS,
   StateValueTypeSchema,
+  type FileStateMode,
   type FlowEdge,
   type FlowNode,
   type MergeRule,
@@ -22,6 +24,7 @@ interface PendingEdge {
 
 const MERGE_RULES = MergeRuleSchema.options;
 const STATE_TYPES = StateValueTypeSchema.options;
+const FILE_STATE_MODES = FileStateModeSchema.options;
 
 export function parse(source: string): FlowFile {
   const tokens = tokenize(source);
@@ -149,7 +152,16 @@ export function parse(source: string): FlowFile {
 
     let merge: MergeRule | undefined;
     let initial: unknown;
-    while (isIdent("merge") || isIdent("initial")) {
+    let filePath: string | undefined;
+    let fileMode: FileStateMode | undefined;
+    let versioned: boolean | undefined;
+    while (
+      isIdent("merge") ||
+      isIdent("initial") ||
+      isIdent("filePath") ||
+      isIdent("fileMode") ||
+      isIdent("versioned")
+    ) {
       const keyTok = next();
       expectPunct("=");
       if (keyTok.value === "merge") {
@@ -158,8 +170,27 @@ export function parse(source: string): FlowFile {
           error(`unknown merge rule "${valueTok.value}" — expected one of: ${MERGE_RULES.join(", ")}`, valueTok);
         }
         merge = valueTok.value as MergeRule;
-      } else {
+      } else if (keyTok.value === "initial") {
         initial = parseValue();
+      } else if (keyTok.value === "filePath") {
+        filePath = expectString().value;
+      } else if (keyTok.value === "fileMode") {
+        const valueTok = expectIdent();
+        if (!FILE_STATE_MODES.includes(valueTok.value as FileStateMode)) {
+          error(`unknown fileMode "${valueTok.value}" — expected one of: ${FILE_STATE_MODES.join(", ")}`, valueTok);
+        }
+        fileMode = valueTok.value as FileStateMode;
+      } else {
+        // versioned
+        if (isIdent("true")) {
+          next();
+          versioned = true;
+        } else if (isIdent("false")) {
+          next();
+          versioned = false;
+        } else {
+          error(`expected "true" or "false" for "versioned" but found ${describeToken(peek())}`);
+        }
       }
     }
 
@@ -169,7 +200,15 @@ export function parse(source: string): FlowFile {
 
     if (startTok.leadingComment) comments["state:" + name] = startTok.leadingComment;
 
-    return initial === undefined ? { name, type, merge } : { name, type, merge, initial };
+    return {
+      name,
+      type,
+      merge,
+      ...(initial !== undefined ? { initial } : {}),
+      ...(filePath !== undefined ? { filePath } : {}),
+      ...(fileMode !== undefined ? { fileMode } : {}),
+      ...(versioned !== undefined ? { versioned } : {}),
+    };
   }
 
   function parseEdgeDecl(): void {

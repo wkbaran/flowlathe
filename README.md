@@ -154,6 +154,24 @@ a valid bot token. Mentions of `@everyone`/`@here` and roles are stripped from e
 sends unless you explicitly set `DISCORD_ALLOW_MENTION_EVERYONE=1` / `DISCORD_ALLOW_MENTION_ROLES=1`.
 This toolset is outbound-only — there's no way yet for a Discord message to *start* a flow.
 
+To use file-backed State entries — a flow author picks a specific document at design time,
+either a read-only reference a Prompt node pulls in or a markdown-style notes file a flow writes
+to across a run — set `FLOWLATHE_STATE_FILES_ROOT` to a directory on disk. Every declared
+`type: "file"` entry's `filePath` is resolved relative to that root (absolute paths, `~`, and `..`
+are all refused); a flow declaring one with the root unset fails clearly at run-start rather than
+partway through. A State panel entry of type `file` has a `fileMode` (`read-only`, for a document
+a flow only ever reads; `read-write`, for one it can also write to) and an optional `versioned`
+flag (read-write only): off writes straight to `filePath` every run, in place, forever; on treats
+`filePath` as a read-only seed document and mints a fresh copy — named
+`<basename>.v<flow version>.<timestamp>.<ext>` next to it — the first time that entry is touched
+in a given run, so every execution gets its own copy and the seed document is never mutated. A
+file-backed entry's merge rule is restricted to `replace` (overwrite) or `append` (append text to
+the end) — the other merge rules don't have a sensible meaning for a file. This is the same
+`read_state`/`write_state` mechanism non-file state entries use, just backed by a real file instead
+of a value in the execution's blob store. A Prompt node's template can also reference a declared
+state entry by name (`{{notes}}`) with no wired edge at all — it resolves ambiently from that
+entry's current value, file-backed or not.
+
 ### Discord triggers (starting a flow from a message)
 
 A `trigger` node lets a flow be started by an inbound event instead of only the canvas's Run

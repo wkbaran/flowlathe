@@ -4,15 +4,48 @@ import type { ToolSpec } from "./contracts.js";
 export const MergeRuleSchema = z.enum(["replace", "append", "numeric-add", "set-union", "error-on-conflict"]);
 export type MergeRule = z.infer<typeof MergeRuleSchema>;
 
-export const StateValueTypeSchema = z.enum(["string", "number", "boolean", "array", "object"]);
+export const StateValueTypeSchema = z.enum(["file", "string", "number", "boolean", "array", "object"]);
 export type StateValueType = z.infer<typeof StateValueTypeSchema>;
 
-export const StateDeclSchema = z.object({
-  name: z.string().min(1),
-  type: StateValueTypeSchema.default("string"),
-  merge: MergeRuleSchema,
-  initial: z.unknown().optional(),
-});
+export const FileStateModeSchema = z.enum(["read-only", "read-write"]);
+export type FileStateMode = z.infer<typeof FileStateModeSchema>;
+
+/** File-type merge is restricted to literal file operations (overwrite / append-to-end) —
+ *  `numeric-add`/`set-union`/`error-on-conflict` don't have a sensible meaning for a file and are
+ *  never run through `applyMerge` for a `type: "file"` entry (see PLAN-STATE-FILES.md §1.1
+ *  fact 10 and `createStateStore`'s file-backed branch). */
+export const FileMergeRuleSchema = z.enum(["replace", "append"]);
+
+export const StateDeclSchema = z
+  .object({
+    name: z.string().min(1),
+    type: StateValueTypeSchema.default("file"),
+    merge: MergeRuleSchema,
+    initial: z.unknown().optional(),
+    /** Only meaningful when type === "file". Relative to FLOWLATHE_STATE_FILES_ROOT, validated
+     *  via resolveWithinRoot at every access — never trusted as pre-validated just because it
+     *  round-tripped through a saved graph. */
+    filePath: z.string().min(1).optional(),
+    fileMode: FileStateModeSchema.optional(),
+    /** Only meaningful when fileMode === "read-write". Ignored for read-only entries. */
+    versioned: z.boolean().optional(),
+  })
+  .superRefine((decl, ctx) => {
+    if (decl.type !== "file") return;
+    if (!decl.filePath) {
+      ctx.addIssue({ code: "custom", message: `state entry "${decl.name}" has type "file" but no filePath`, path: ["filePath"] });
+    }
+    if (!decl.fileMode) {
+      ctx.addIssue({ code: "custom", message: `state entry "${decl.name}" has type "file" but no fileMode`, path: ["fileMode"] });
+    }
+    if (!FileMergeRuleSchema.options.includes(decl.merge as "replace" | "append")) {
+      ctx.addIssue({
+        code: "custom",
+        message: `state entry "${decl.name}" has type "file" but merge "${decl.merge}" — file entries only support "replace"/"append"`,
+        path: ["merge"],
+      });
+    }
+  });
 export type StateDecl = z.infer<typeof StateDeclSchema>;
 
 export interface StateReadMeta {

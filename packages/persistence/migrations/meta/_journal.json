@@ -50,6 +50,13 @@
       "when": 1788813276705,
       "tag": "0006_noisy_hardball",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788917287760,
+      "tag": "0007_yummy_stardust",
+      "breakpoints": true
     }
   ]
 }

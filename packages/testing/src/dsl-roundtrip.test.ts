@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { failingFanOutGraph } from "./golden/failing-fan-out.js";
 import { fanOutGraph } from "./golden/fan-out.js";
+import { fileStateNodeGraph } from "./golden/file-state-node.js";
 import { loopRouterBodyGraph } from "./golden/loop-router-body.js";
 import { mapFanoutGraph } from "./golden/map-fanout.js";
 import { mapMultinodeBodyGraph } from "./golden/map-multinode-body.js";
@@ -25,6 +26,7 @@ import { twoNodeChainGraph } from "./golden/two-node-chain.js";
 const GOLDEN: { slug: string; graph: FlowGraph }[] = [
   { slug: "failing-fan-out", graph: failingFanOutGraph },
   { slug: "fan-out", graph: fanOutGraph },
+  { slug: "file-state-node", graph: fileStateNodeGraph },
   { slug: "loop-router-body", graph: loopRouterBodyGraph },
   { slug: "map-fanout", graph: mapFanoutGraph },
   { slug: "map-multinode-body", graph: mapMultinodeBodyGraph },

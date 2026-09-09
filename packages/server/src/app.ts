@@ -53,6 +53,9 @@ export interface BuildAppOptions {
    *  (`DEFAULT_ALLOWED_HOSTS`) — the API is unauthenticated, so this is the one thing standing
    *  between a public web page and a request landing on this server via DNS rebinding. */
   allowedHosts?: string[];
+  /** PLAN-STATE-FILES.md: the realpath'd `FLOWLATHE_STATE_FILES_ROOT`, resolved once at boot
+   *  (index.ts) — undefined when that env var is unset. */
+  stateFilesRoot?: string | undefined;
 }
 
 export function buildApp(opts: BuildAppOptions): FastifyInstance {
@@ -73,6 +76,7 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     pluginToolsets: opts.pluginToolsets,
     flowsDir,
     flowsHub,
+    stateFilesRoot: opts.stateFilesRoot,
   });
   registerExecutionRoutes(app, {
     db: opts.db,
@@ -80,6 +84,7 @@ export function buildApp(opts: BuildAppOptions): FastifyInstance {
     scheduler: opts.schedulerRegistry,
     pluginToolsets: opts.pluginToolsets,
     flowsDir,
+    stateFilesRoot: opts.stateFilesRoot,
   });
   registerProviderRoutes(app, {
     db: opts.db,

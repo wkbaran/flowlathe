@@ -62,6 +62,35 @@ describe("parse", () => {
     expect(graph.state).toEqual([{ name: "x", type: "string", merge: "replace" }]);
   });
 
+  it("parses a file-backed state decl's filePath/fileMode/versioned (PLAN-STATE-FILES.md)", () => {
+    const source =
+      'flow "f" {\n  state notes: file merge=replace filePath="notes/seed.md" fileMode=read-write versioned=true\n}\n';
+    const { graph } = parse(source);
+    expect(graph.state).toEqual([
+      {
+        name: "notes",
+        type: "file",
+        merge: "replace",
+        filePath: "notes/seed.md",
+        fileMode: "read-write",
+        versioned: true,
+      },
+    ]);
+  });
+
+  it("parses a read-only file-backed state decl with versioned omitted", () => {
+    const source = 'flow "f" {\n  state resource: file merge=replace filePath="doc.md" fileMode=read-only\n}\n';
+    const { graph } = parse(source);
+    expect(graph.state).toEqual([
+      { name: "resource", type: "file", merge: "replace", filePath: "doc.md", fileMode: "read-only" },
+    ]);
+  });
+
+  it("rejects an unknown fileMode", () => {
+    const source = 'flow "f" {\n  state notes: file merge=replace filePath="a.md" fileMode=bogus\n}\n';
+    expect(() => parse(source)).toThrow(/unknown fileMode/);
+  });
+
   it("parses top-level and nested node declarations, with parentId sugar", () => {
     const { graph } = parse(EXAMPLE);
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));

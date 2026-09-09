@@ -14,10 +14,20 @@ export function saveStateDecls(db: Db, flowVersionId: string, decls: StateDecl[]
         typeJson: decl.type,
         merge: decl.merge,
         initialJson: decl.initial ?? null,
+        fileMode: decl.fileMode ?? null,
+        versioned: decl.versioned ?? null,
+        filePath: decl.filePath ?? null,
       })
       .onConflictDoUpdate({
         target: [stateDecls.flowVersionId, stateDecls.name],
-        set: { merge: decl.merge, typeJson: decl.type, initialJson: decl.initial ?? null },
+        set: {
+          merge: decl.merge,
+          typeJson: decl.type,
+          initialJson: decl.initial ?? null,
+          fileMode: decl.fileMode ?? null,
+          versioned: decl.versioned ?? null,
+          filePath: decl.filePath ?? null,
+        },
       })
       .run();
   }
@@ -25,7 +35,15 @@ export function saveStateDecls(db: Db, flowVersionId: string, decls: StateDecl[]
 
 export function getStateDecls(db: Db, flowVersionId: string): StateDecl[] {
   return db
-    .select({ name: stateDecls.name, merge: stateDecls.merge, type: stateDecls.typeJson, initial: stateDecls.initialJson })
+    .select({
+      name: stateDecls.name,
+      merge: stateDecls.merge,
+      type: stateDecls.typeJson,
+      initial: stateDecls.initialJson,
+      fileMode: stateDecls.fileMode,
+      versioned: stateDecls.versioned,
+      filePath: stateDecls.filePath,
+    })
     .from(stateDecls)
     .where(eq(stateDecls.flowVersionId, flowVersionId))
     .all()
@@ -34,6 +52,9 @@ export function getStateDecls(db: Db, flowVersionId: string): StateDecl[] {
       merge: row.merge,
       type: (row.type as StateDecl["type"]) ?? "string",
       initial: row.initial ?? undefined,
+      ...(row.fileMode ? { fileMode: row.fileMode } : {}),
+      ...(row.versioned !== null && row.versioned !== undefined ? { versioned: row.versioned } : {}),
+      ...(row.filePath ? { filePath: row.filePath } : {}),
     }));
 }
 

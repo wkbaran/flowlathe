@@ -16,7 +16,7 @@ import {
   startExecution,
 } from "@flowlathe/persistence";
 import type { ExecutionHub } from "./execution-hub.js";
-import { buildHostAndRun } from "./host-builder.js";
+import { buildHostAndRun, failExecutionAtStart } from "./host-builder.js";
 
 type SerializedPortSlot = { kind: "value"; ref: string } | { kind: "never"; reason: string };
 
@@ -86,6 +86,9 @@ export interface StepOnceOptions {
   executionId: string;
   branchId: string;
   pluginToolsets?: ToolRegistration[] | undefined;
+  /** PLAN-STATE-FILES.md — threaded straight through to `buildHostAndRun`. */
+  stateFilesRoot?: string | undefined;
+  flowVersion?: number | undefined;
 }
 
 export interface StepOutcome {
@@ -104,19 +107,28 @@ function latestSnapshot(db: Db, branchId: string) {
 /** Restores the branch's latest snapshot, dispatches exactly one ready activation, and — if
  *  the graph isn't already fully settled — persists the resulting snapshot as the new tip. */
 export async function stepOnce(opts: StepOnceOptions): Promise<StepOutcome> {
-  const { db, hub, scheduler, graph, executionId, branchId, pluginToolsets } = opts;
+  const { db, hub, scheduler, graph, executionId, branchId, pluginToolsets, stateFilesRoot, flowVersion } = opts;
   const latest = latestSnapshot(db, branchId);
 
-  const { run, resolveSuspended, emit } = buildHostAndRun({
-    db,
-    hub,
-    scheduler,
-    executionId,
-    branchId,
-    stateDecls: graph.state,
-    stateReplay: listStateWritesForBranch(db, branchId),
-    pluginToolsets,
-  });
+  let built;
+  try {
+    built = buildHostAndRun({
+      db,
+      hub,
+      scheduler,
+      executionId,
+      branchId,
+      stateDecls: graph.state,
+      stateReplay: listStateWritesForBranch(db, branchId),
+      pluginToolsets,
+      stateFilesRoot,
+      flowVersion,
+    });
+  } catch (err) {
+    failExecutionAtStart(db, hub, executionId, branchId, (err as Error).message);
+    throw err;
+  }
+  const { run, resolveSuspended, emit } = built;
   hub.registerResolver(executionId, resolveSuspended);
   try {
     const engine = GraphEngine.restore(graph, run, deserializeSnapshot(db, latest.payload));

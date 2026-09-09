@@ -85,6 +85,11 @@ function printStateDecl(decl: StateDecl, indent: string, comments: Record<string
   if (comment) out.push(...printComment(comment, indent));
   let line = `${indent}state ${decl.name}: ${decl.type} merge=${decl.merge}`;
   if (decl.initial !== undefined) line += ` initial=${printValue(decl.initial)}`;
+  // PLAN-STATE-FILES.md: only meaningful for type "file", but printed whenever present so a
+  // round-trip through parse/print never silently drops them.
+  if (decl.filePath !== undefined) line += ` filePath=${printStringLiteral(decl.filePath)}`;
+  if (decl.fileMode !== undefined) line += ` fileMode=${decl.fileMode}`;
+  if (decl.versioned !== undefined) line += ` versioned=${decl.versioned ? "true" : "false"}`;
   out.push(line);
   return out;
 }

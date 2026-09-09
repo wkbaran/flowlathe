@@ -3,6 +3,7 @@ import {
   appendRunEvent,
   beginStep,
   type Db,
+  finishExecution,
   finishStep,
   recordContextCompaction,
   recordFailedResponse,
@@ -35,6 +36,21 @@ export interface BuiltHost {
   cancellation: RunControl;
 }
 
+/** A run-start failure that happens before a `Run`/`emit` even exists to report through — e.g.
+ *  `buildHostAndRun` throwing synchronously because a flow declares a `type: "file"` state entry
+ *  with no `FLOWLATHE_STATE_FILES_ROOT` configured (PLAN-STATE-FILES.md §4.3). Mirrors exactly
+ *  what the ordinary post-construction `run_failed`/`finishExecution("failed")` path
+ *  (`executor.ts`'s `.catch`, `stepper.ts`'s `catch`) already does, so a construction-time error
+ *  surfaces through the same execution-status/run-event contract as any other run failure,
+ *  rather than throwing synchronously out of `runFlow`/`stepOnce` and leaving the execution row
+ *  stuck at "running" forever. */
+export function failExecutionAtStart(db: Db, hub: ExecutionHub, executionId: string, branchId: string, message: string): void {
+  const event: RunEvent = { kind: "run_failed", error: message };
+  const seq = appendRunEvent(db, { executionId, branchId, kind: event.kind, payload: event });
+  hub.publish(executionId, { seq, kind: event.kind, payload: event });
+  finishExecution(db, executionId, "failed", { message });
+}
+
 /** The one place a `Run` gets wired to persistence + SSE, shared by run mode and step mode. */
 export function buildHostAndRun(opts: {
   db: Db;
@@ -49,8 +65,16 @@ export function buildHostAndRun(opts: {
   /** Plugin-provided tools (e.g. Spotify), registered alongside the built-in "state" toolset —
    *  see @flowlathe/plugin-spotify. Empty when no plugin is configured. */
   pluginToolsets?: ToolRegistration[] | undefined;
+  /** PLAN-STATE-FILES.md: the realpath'd `FLOWLATHE_STATE_FILES_ROOT`, resolved once at boot
+   *  (index.ts) — undefined when that env var is unset. Required only if `stateDecls` contains a
+   *  `type: "file"` entry (`createStateStore` throws clearly otherwise); harmless to pass when it
+   *  doesn't. */
+  stateFilesRoot?: string | undefined;
+  /** `flow_versions.version` for the version this execution is running — used to mint a
+   *  versioned file-state entry's per-execution filename. */
+  flowVersion?: number | undefined;
 }): BuiltHost {
-  const { db, hub, scheduler, executionId, branchId, stateDecls, stateReplay, pluginToolsets } = opts;
+  const { db, hub, scheduler, executionId, branchId, stateDecls, stateReplay, pluginToolsets, stateFilesRoot, flowVersion } = opts;
   const stepIdByNodeId = new Map<string, string>();
   const cancellation = createRunControl();
   const suspendRegistry = createSuspendRegistry(cancellation);
@@ -128,7 +152,8 @@ export function buildHostAndRun(opts: {
     }
   };
 
-  const state = createStateStore(hostEmit, { decls: stateDecls, replay: stateReplay });
+  const fileConfig = stateFilesRoot && flowVersion !== undefined ? { root: stateFilesRoot, flowVersion } : undefined;
+  const state = createStateStore(hostEmit, { decls: stateDecls, replay: stateReplay, fileConfig });
   const run = createRun({
     host: {
       scheduler,

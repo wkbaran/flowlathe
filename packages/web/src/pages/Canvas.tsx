@@ -1,4 +1,14 @@
-import type { FlowEdge, FlowNode, GraphDiff, MergeRule, NodeKind, RunEvent, StateDecl, StateValueType } from "@flowlathe/core";
+import type {
+  FileStateMode,
+  FlowEdge,
+  FlowNode,
+  GraphDiff,
+  MergeRule,
+  NodeKind,
+  RunEvent,
+  StateDecl,
+  StateValueType,
+} from "@flowlathe/core";
 import { checkUrlSafety, extractTemplateVars, validateGraph } from "@flowlathe/core";
 import { DslError, format, parse, print } from "@flowlathe/dsl";
 import {
@@ -412,7 +422,10 @@ export function Canvas() {
   }
 
   function addStateDecl() {
-    setStateDecls((prev) => [...prev, { name: `entry${prev.length + 1}`, type: "string", merge: "replace" }]);
+    setStateDecls((prev) => [
+      ...prev,
+      { name: `entry${prev.length + 1}`, type: "file", merge: "replace", fileMode: "read-write" },
+    ]);
   }
 
   function updateStateDecl(index: number, patch: Partial<StateDecl>) {
@@ -1102,25 +1115,40 @@ export function Canvas() {
                     />
                     <Select
                       size="small"
-                      value={decl.merge}
-                      onChange={(e) => updateStateDecl(i, { merge: e.target.value as MergeRule })}
-                      inputProps={{ "aria-label": `State entry ${i} merge rule` }}
+                      value={decl.type}
+                      onChange={(e) => {
+                        const type = e.target.value as StateValueType;
+                        if (type === "file") {
+                          updateStateDecl(i, {
+                            type,
+                            fileMode: decl.fileMode ?? "read-write",
+                            merge: decl.merge === "append" ? "append" : "replace",
+                          });
+                        } else {
+                          updateStateDecl(i, { type });
+                        }
+                      }}
+                      inputProps={{ "aria-label": `State entry ${i} type` }}
                     >
-                      {(["replace", "append", "numeric-add", "set-union", "error-on-conflict"] as MergeRule[]).map((m) => (
-                        <MenuItem key={m} value={m}>
-                          {m}
+                      {(["file", "string", "number", "boolean", "array", "object"] as StateValueType[]).map((t) => (
+                        <MenuItem key={t} value={t}>
+                          {t}
                         </MenuItem>
                       ))}
                     </Select>
                     <Select
                       size="small"
-                      value={decl.type}
-                      onChange={(e) => updateStateDecl(i, { type: e.target.value as StateValueType })}
-                      inputProps={{ "aria-label": `State entry ${i} type` }}
+                      value={decl.merge}
+                      onChange={(e) => updateStateDecl(i, { merge: e.target.value as MergeRule })}
+                      inputProps={{ "aria-label": `State entry ${i} merge rule` }}
                     >
-                      {(["string", "number", "boolean", "array", "object"] as StateValueType[]).map((t) => (
-                        <MenuItem key={t} value={t}>
-                          {t}
+                      {(
+                        (decl.type === "file"
+                          ? ["replace", "append"]
+                          : ["replace", "append", "numeric-add", "set-union", "error-on-conflict"]) as MergeRule[]
+                      ).map((m) => (
+                        <MenuItem key={m} value={m}>
+                          {m}
                         </MenuItem>
                       ))}
                     </Select>
@@ -1128,6 +1156,42 @@ export function Canvas() {
                       Remove
                     </Button>
                   </Box>
+                  {decl.type === "file" && (
+                    <Box sx={{ display: "flex", gap: 0.5 }}>
+                      <TextField
+                        size="small"
+                        label="File path (relative to state files root)"
+                        value={decl.filePath ?? ""}
+                        onChange={(e) => updateStateDecl(i, { filePath: e.target.value })}
+                        sx={{ flexGrow: 1 }}
+                        slotProps={{ htmlInput: { "aria-label": `State entry ${i} file path` } }}
+                      />
+                      <Select
+                        size="small"
+                        value={decl.fileMode ?? "read-write"}
+                        onChange={(e) => updateStateDecl(i, { fileMode: e.target.value as FileStateMode })}
+                        inputProps={{ "aria-label": `State entry ${i} file mode` }}
+                      >
+                        {(["read-write", "read-only"] as FileStateMode[]).map((m) => (
+                          <MenuItem key={m} value={m}>
+                            {m}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                      {decl.fileMode !== "read-only" && (
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              size="small"
+                              checked={decl.versioned ?? false}
+                              onChange={(e) => updateStateDecl(i, { versioned: e.target.checked })}
+                            />
+                          }
+                          label="Versioned"
+                        />
+                      )}
+                    </Box>
+                  )}
                   {stateValues[decl.name] !== undefined && (
                     <Typography variant="caption" color="text.secondary">
                       current: {JSON.stringify(stateValues[decl.name])}

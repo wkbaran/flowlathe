@@ -54,10 +54,12 @@ export interface FlowRouteDeps {
   pluginToolsets?: ToolRegistration[] | undefined;
   flowsDir: string;
   flowsHub: FlowsHub;
+  /** PLAN-STATE-FILES.md: the realpath'd `FLOWLATHE_STATE_FILES_ROOT`, resolved once at boot. */
+  stateFilesRoot?: string | undefined;
 }
 
 export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): void {
-  const { db, hub, scheduler, pluginToolsets, flowsDir, flowsHub } = deps;
+  const { db, hub, scheduler, pluginToolsets, flowsDir, flowsHub, stateFilesRoot } = deps;
 
   /** Writes `<flowsDir>/<id>.flow` and snapshots a `flow_versions` row for it (content-hash
    *  deduped by `saveFlowVersion`) — the one place every SAVE (not create — see `POST /api/
@@ -271,6 +273,8 @@ export function registerFlowRoutes(app: FastifyInstance, deps: FlowRouteDeps): v
       flowVersionId: flow.flowVersionId,
       graph: flow.graph,
       pluginToolsets,
+      stateFilesRoot,
+      flowVersion: flow.version,
     });
     return reply.code(202).send({ executionId, branchId });
   });

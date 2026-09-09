@@ -1206,3 +1206,87 @@ rediscover them the hard way.
     bound in the shared parser alone would have left the body fallback able to stall a call for
     however long a hostile/broken `Retry-After` value said to wait. Route every such fallback
     through the same shared parser rather than reimplementing the arithmetic inline.
+- **PLAN-STATE-FILES.md landed file-backed State entries (`type: "file"`), replacing
+  `PLAN-FILE-TOOL.md`'s generic `fs` toolset design before that plan was ever implemented** (it
+  has its own superseded banner now). A flow author picks a specific file at design time — no
+  arbitrary path from a model, ever. Things worth knowing before touching this area again:
+  - **A declared state entry's name can now satisfy a Prompt node's template variable with no
+    wired edge at all** — the second such exception after Loop/Map's injected-port convention,
+    and deliberately type-agnostic (works for any `StateValueType`, not just `file`) even though
+    file-backed entries are what motivated it. Implemented at the three call sites that interpret
+    `NodeEmitter.inputPorts`'s result as "needs an edge" (`validateGraph`'s R7 in
+    `packages/core/src/regions.ts`, `run-graph.ts`'s new `requiredPortsFor`, and
+    `compile-graph.ts`'s `bindPort`) — never inside `NodeEmitter.inputPorts` itself, and scoped to
+    `node.type === "prompt"` only. Verified to be a genuine two-sided parity risk, not a
+    theoretical one: temporarily reverting only the `compile-graph.ts` side made
+    `packages/testing/src/golden/file-state-node.ts` fail with a real "no incoming edge bound to
+    input" error from the compiled script, not a vacuous pass.
+  - **The golden parity fixture for this deliberately does NOT use `type: "file"`** — it uses a
+    plain `string` entry with an `initial` value instead. A compiled script has no
+    `FLOWLATHE_STATE_FILES_ROOT` pipeline (see below), so a `type: "file"` entry would make the
+    compiled script refuse to run at all, which would defeat a parity fixture that needs to
+    compare a real execution trace across both engines. The ambient-binding mechanism under test
+    is identical either way — `file` vs `string` only changes how `state.read(...)` resolves its
+    value, not whether the port gets an edge.
+  - **A compiled script explicitly refuses to run (not crash) if the flow declares any
+    `type: "file"` state entry** — `compile-graph.ts` embeds `REQUIRED_FILE_STATE_ENTRIES` (the
+    list of such entries' names) and `main()` checks it before touching the scheduler, mirroring
+    the existing `REQUIRED_PLUGIN_TOOLSETS` exported-script-refusal pattern exactly. Building a
+    real standalone-script equivalent of `FLOWLATHE_STATE_FILES_ROOT` was out of scope for this
+    pass.
+  - **`createStateStore` throwing synchronously at construction (when a flow declares a
+    `type: "file"` entry but no `fileConfig` was supplied) surfaced a real, pre-existing structural
+    gap**: `buildHostAndRun` is called *outside* the async `runGraph()`/`GraphEngine` boundary in
+    both `executor.ts`'s `runFlow` and `stepper.ts`'s `stepOnce`, so a synchronous throw from it
+    used to propagate as an uncaught exception instead of going through the ordinary
+    `run_failed`/`finishExecution("failed")` path every other run-start/run-time failure uses —
+    leaving the execution row stuck at `"running"` forever. Fixed generally (not just for this one
+    new throw) by wrapping `buildHostAndRun`'s call in both files and routing a construction
+    failure through a new shared `failExecutionAtStart` (`host-builder.ts`), which does the same
+    `appendRunEvent("run_failed")` + `hub.publish` + `finishExecution` sequence `emit({kind:
+    "run_failed", ...})` normally does — built without an `emit` closure, since construction
+    failing is exactly why one was never created. Any future code that can throw synchronously
+    from inside `buildHostAndRun` should rely on this same path rather than reintroducing an
+    unguarded call.
+  - **Versioned mode's template document must already exist before first access, not just before
+    a read-only entry's read** — `resolveFor` (`state-store.ts`) requires `mustExist` whenever
+    `fileMode === "read-only"` **or** `versioned === true`, not only for read-only as a literal
+    reading of the plan's own sketch would suggest. A versioned entry's first access (read OR
+    write) mints a copy by `readFileSync`-ing the template — without this, an unset/non-existent
+    seed document would crash inside `mintVersionedCopy` with a confusing `ENOENT` instead of
+    `resolveWithinRoot`'s clear "path does not exist" error.
+  - **`resolveWithinRoot` lives in `@flowlathe/runtime`, not a new plugin package** — this design
+    has no separate `fs` toolset for it to belong to (unlike `PLAN-FILE-TOOL.md`'s original home
+    for it), so it was ported there directly as `state-file-io.ts`. If `PLAN-FILE-TOOL.md`'s
+    generic tool is ever built later, it should import this copy.
+  - **DSL (`.flow` text) round-tripping of `filePath`/`fileMode`/`versioned` was NOT something
+    this plan could defer** — unlike most "flagged as a real gap, check during implementation"
+    notes, this one would have silently corrupted data: every save writes the `.flow` file via
+    `@flowlathe/dsl`'s `print()` (`flow-store.ts`'s `canonicalTextFor`), and a file later re-synced
+    from disk is re-`parse()`d back into the DB. Had `printStateDecl`/`parseStateDecl` not been
+    extended for the three new fields, every save-then-reload cycle would have silently dropped a
+    file-backed entry's path/mode/versioning. Fixed in `packages/dsl/src/print.ts` and `parse.ts`;
+    `fileMode`'s hyphenated values (`read-only`/`read-write`) tokenize fine as a single `ident`
+    because the lexer already allows an internal hyphen followed by an ident-part character (the
+    same rule that lets `error-on-conflict` work as a merge-rule identifier).
+  - **File-type decl shape (filePath/fileMode present, merge restricted to `replace`/`append`) is
+    validated in TWO independent places, and both are load-bearing.** `StateDeclSchema`'s own
+    `superRefine` (`packages/core/src/state.ts`) catches it for every caller that actually goes
+    through `parseFlowGraph`/`FlowGraphSchema.parse` — which turns out to be only `PUT /api/flows/
+    :id`'s 400-on-save path. **The DSL parser does NOT call `StateDeclSchema.parse` at all**
+    (`packages/dsl/src/parse.ts`'s `parseStateDecl` hand-builds a `StateDecl` object field by
+    field) — so a `.flow` file pasted via `/api/flows/import`, or one synced straight off disk by
+    `flow-store.ts`'s `syncFlowFile`/`watchFlowsDir` (which never calls `validateGraph` either, by
+    existing design — see its own doc comment), would have reached `createStateStore` with a
+    missing `filePath` and crashed confusingly at first run instead of failing clearly. Closed by
+    adding R8 to `validateGraph` itself (`packages/core/src/regions.ts`) — the same check,
+    duplicated in the `problems: string[]` idiom, but reachable from every `validateGraph` call
+    site (the interpreter's `GraphEngine` constructor, the compiler, and both the `/run`/
+    `/step-start`/`/import` route handlers), which is the actual safety net for anything that
+    bypassed the schema on the way into the DB.
+  - **Branch-fork isolation for file-backed entries remains unbuilt, on purpose** — confirmed
+    safe-by-omission: `stepBack`'s `getStateSnapshotAsOf` only ever iterates `state_writes` rows,
+    and a file-backed entry never produces any (it bypasses `state_writes`/blob persistence
+    entirely, by design). Forking a branch mid-run leaves a file-backed entry's on-disk file
+    shared across every branch of that execution, last-write-wins — a real, known gap for a user
+    who forks specifically to try two different notes-taking paths side by side.

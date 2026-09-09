@@ -1,5 +1,6 @@
 import {
   activationKey,
+  extractTemplateVars,
   isNever,
   isValue,
   neverSlot,
@@ -16,8 +17,9 @@ import {
 } from "@flowlathe/core";
 import type { LoopSpec } from "@flowlathe/node-loop";
 import type { MapSpec } from "@flowlathe/node-map";
+import type { PromptSpec } from "@flowlathe/node-prompt";
 import type { Run } from "@flowlathe/runtime";
-import { registry } from "./registry.js";
+import { registry, type PortDecl } from "./registry.js";
 
 export interface RunGraphOptions {
   graph: FlowGraph;
@@ -66,10 +68,24 @@ export interface EngineOptions {
 }
 
 /** Declared input port names for a node, independent of scope — used only for the top-level
- *  `validateGraph` call (R6/R7), which needs port names, not readiness. */
+ *  `validateGraph` call (R6/R7), which needs port names, not readiness. `validateGraph` itself
+ *  applies the state-entry port exemption (PLAN-STATE-FILES.md L9) using `graph.state`, so this
+ *  stays a plain, unfiltered port list. */
 function portsOf(node: FlowNode): string[] {
   const data = registry[node.type].schema.parse(node.data) as Record<string, unknown>;
   return registry[node.type].inputPorts({ id: node.id, ...data }).map((p) => p.name);
+}
+
+/** A Prompt node's declared ports, minus any whose name matches a declared flow-State entry — an
+ *  ambient binding resolved from `run.state.read(...)` rather than a wired edge (PLAN-STATE-
+ *  FILES.md L8/L9). Every other node kind's ports are returned unfiltered; this is the one place
+ *  (alongside `validateGraph`'s R7 and the compiler's `portsOf`/`callExpr`) that interprets
+ *  `NodeEmitter.inputPorts`'s result as "needs an edge" — `NodeEmitter.inputPorts` itself is
+ *  never touched, so every other node package is unaffected. */
+function requiredPortsFor(node: FlowNode, ports: PortDecl[], graph: FlowGraph): PortDecl[] {
+  if (node.type !== "prompt") return ports;
+  const stateNames = new Set(graph.state.map((d) => d.name));
+  return ports.filter((p) => !stateNames.has(p.name));
 }
 
 /**
@@ -249,7 +265,7 @@ export class GraphEngine {
   private isReady(nodeId: string): boolean {
     const node = this.nodesById.get(nodeId)!;
     const spec = this.parseSpec(node);
-    const ports = registry[node.type].inputPorts(spec);
+    const ports = requiredPortsFor(node, registry[node.type].inputPorts(spec), this.graph);
     return ports.every((p) => this.portSlot(nodeId, p.name).kind !== "empty");
   }
 
@@ -294,7 +310,7 @@ export class GraphEngine {
   private async dispatchNode(node: FlowNode): Promise<void> {
     const descriptor = registry[node.type];
     const spec = this.parseSpec(node);
-    const ports = descriptor.inputPorts(spec);
+    const ports = requiredPortsFor(node, descriptor.inputPorts(spec), this.graph);
     const slots = Object.fromEntries(ports.map((p) => [p.name, this.portSlot(node.id, p.name)]));
 
     const requiredNever = ports.find((p) => p.required && isNever(slots[p.name]!));
@@ -312,6 +328,19 @@ export class GraphEngine {
         .filter((entry): entry is [string, Extract<PortSlot, { kind: "value" }>] => isValue(entry[1]))
         .map(([name, slot]) => [name, slot.value]),
     );
+
+    // PLAN-STATE-FILES.md L8/§4.4: a Prompt template variable with no wired edge, whose name
+    // matches a declared State entry, is filled ambiently from `run.state.read(...)` rather than
+    // from a port — `requiredPortsFor` already excluded it from `ports` above, so it's never
+    // part of readiness/never-checks; it's resolved here, right before dispatch.
+    if (node.type === "prompt") {
+      for (const varName of extractTemplateVars((spec as PromptSpec).template)) {
+        if (!(varName in inputs)) {
+          const decl = this.graph.state.find((d) => d.name === varName);
+          if (decl) inputs[varName] = String(this.run.state.read(varName));
+        }
+      }
+    }
 
     if (node.type === "loop" || node.type === "map") {
       await this.dispatchLoopOrMap(node, spec, inputs);

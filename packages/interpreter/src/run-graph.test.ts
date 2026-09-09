@@ -714,6 +714,77 @@ describe("runGraph — missing plugin dependency gate", () => {
   });
 });
 
+describe("runGraph — ambient state binding for Prompt templates (PLAN-STATE-FILES.md)", () => {
+  function makeRunWithState(decls: FlowGraph["state"]) {
+    const events: RunEvent[] = [];
+    const emit = (e: RunEvent): void => {
+      events.push(e);
+    };
+    const scheduler = new SimpleScheduler({ mock: { adapter: new MockProviderAdapter(), maxParallel: 8 } });
+    const cancellation = createRunControl();
+    const suspendRegistry = createSuspendRegistry(cancellation);
+    const state = createStateStore(emit, { decls });
+    const run = createRun({
+      host: {
+        scheduler,
+        blobs: new InMemoryBlobStore(),
+        emit,
+        clock: { now: () => 0 },
+        state,
+        llmConfig: createLlmConfigStore(),
+        context: createContextStore(),
+        tools: createToolRegistry(stateToolset(state)),
+        cancellation,
+        net: { fetch: (() => { throw new Error("net not stubbed in this test"); }) as unknown as typeof fetch },
+        ...suspendRegistry,
+      },
+    });
+    return { run, events };
+  }
+
+  it("a Prompt template variable with no wired edge, matching a declared state entry, resolves from state", async () => {
+    const { run } = makeRunWithState([{ name: "notes", type: "string", merge: "replace", initial: "hello" }]);
+    const graph: FlowGraph = {
+      nodes: [node("a", "prompt", promptData("notes: {{notes}}"))],
+      edges: [],
+      state: [{ name: "notes", type: "string", merge: "replace", initial: "hello" }],
+    };
+    const { outputs } = await runGraph({ graph, run });
+    expect(outputs["a"]).toBe("[mock:m] notes: hello");
+  });
+
+  it("dispatches successfully even though the port has zero wired edges (the readiness exemption actually fires)", async () => {
+    const { run } = makeRunWithState([{ name: "notes", type: "string", merge: "replace", initial: "x" }]);
+    const graph: FlowGraph = {
+      nodes: [node("seed", "prompt", promptData("go")), node("a", "prompt", promptData("{{notes}}"))],
+      edges: [], // "a" has NO incoming edges at all -- only the state exemption lets it become ready
+      state: [{ name: "notes", type: "string", merge: "replace", initial: "x" }],
+    };
+    const { outputs } = await runGraph({ graph, run });
+    expect(outputs["a"]).toBe("[mock:m] x");
+  });
+
+  it("is name-matched, not blanket: an undeclared template variable still raises the ordinary missing-template-variable error", async () => {
+    const { run } = makeRunWithState([{ name: "notes", type: "string", merge: "replace", initial: "x" }]);
+    const graph: FlowGraph = {
+      nodes: [node("a", "prompt", promptData("{{somethingElse}}"))],
+      edges: [],
+      state: [{ name: "notes", type: "string", merge: "replace", initial: "x" }],
+    };
+    await expect(runGraph({ graph, run })).rejects.toThrow(/invalid flow graph.*declares input port "somethingElse" with no incoming edge/);
+  });
+
+  it("does not exempt a Loop's initTemplate variable even when it matches a declared state entry name (L8: scoped to Prompt only)", async () => {
+    const { run } = makeRunWithState([{ name: "acc", type: "string", merge: "replace", initial: "x" }]);
+    const graph: FlowGraph = {
+      nodes: [node("l", "loop", { initTemplate: "{{acc}}", accPortName: "acc", stopValue: "3", maxIterations: 10 }), node("body", "prompt", promptData("{{acc}}"), "l")],
+      edges: [],
+      state: [{ name: "acc", type: "string", merge: "replace", initial: "x" }],
+    };
+    await expect(runGraph({ graph, run })).rejects.toThrow(/invalid flow graph/);
+  });
+});
+
 describe("runGraph — seed (trigger nodes)", () => {
   it("uses the seeded value instead of dispatching (testPayload never appears)", async () => {
     const { run, events } = makeRun();

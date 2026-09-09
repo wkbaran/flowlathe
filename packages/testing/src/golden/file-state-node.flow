@@ -1,0 +1,9 @@
+flow "file-state-node" {
+  state notes: string merge=replace initial="hello"
+
+  node a: prompt @(0, 0) {
+    template = "notes: {{notes}}"
+    providerId = "mock"
+    modelId = "m"
+  }
+}

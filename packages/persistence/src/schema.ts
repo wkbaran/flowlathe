@@ -302,6 +302,11 @@ export const stateDecls = sqliteTable(
       .notNull()
       .$type<"replace" | "append" | "numeric-add" | "set-union" | "error-on-conflict">(),
     initialJson: text("initial_json", { mode: "json" }),
+    /** PLAN-STATE-FILES.md: only meaningful when `typeJson` is `"file"`. Nullable — every entry
+     *  declared before this plan has none of these three columns set. */
+    fileMode: text("file_mode").$type<"read-only" | "read-write">(),
+    versioned: integer("versioned", { mode: "boolean" }),
+    filePath: text("file_path"),
   },
   (t) => [primaryKey({ columns: [t.flowVersionId, t.name] })],
 );

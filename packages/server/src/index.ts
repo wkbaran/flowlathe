@@ -8,6 +8,7 @@ import { searxngToolsetFromEnv, SEARXNG_MANIFEST } from "@flowlathe/plugin-searx
 import { firecrawlToolsetFromEnv, FIRECRAWL_MANIFEST } from "@flowlathe/plugin-firecrawl";
 import { discordClientFromEnv, discordToolsetFromEnv, DISCORD_MANIFEST } from "@flowlathe/plugin-discord";
 import { listTriggers } from "@flowlathe/persistence";
+import { resolveStateFilesRoot } from "@flowlathe/runtime";
 import { resolveAllowedHosts } from "./allowed-hosts.js";
 import { buildApp } from "./app.js";
 import { resolveCredentialKey } from "./credential-key.js";
@@ -51,6 +52,11 @@ const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
 const pluginManifests: PluginManifest[] = [SPOTIFY_MANIFEST, SEARXNG_MANIFEST, FIRECRAWL_MANIFEST, DISCORD_MANIFEST];
 
 const allowedHosts = resolveAllowedHosts();
+
+/** PLAN-STATE-FILES.md: unset ⇒ undefined — a flow declaring a `type: "file"` state entry then
+ *  fails clearly at run-start (`createStateStore`'s guard), not here. */
+const rawStateFilesRoot = process.env["FLOWLATHE_STATE_FILES_ROOT"];
+const stateFilesRoot = rawStateFilesRoot ? resolveStateFilesRoot(rawStateFilesRoot) : undefined;
 
 const spotifyClientId = process.env["SPOTIFY_CLIENT_ID"];
 let spotifyConfig: SpotifyOAuthConfig | undefined;
@@ -118,6 +124,7 @@ const app = buildApp({
   flowsDir,
   flowsHub,
   allowedHosts,
+  stateFilesRoot,
 });
 
 /** PLAN-NETWORK-POSTURE.md: the API is unauthenticated, so a non-loopback bind is only ever

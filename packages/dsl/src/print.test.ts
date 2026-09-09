@@ -74,6 +74,31 @@ describe("print", () => {
     const text = print({ name: "f", graph: twoNodeChain, comments: { "node:a": "the entry point" } });
     expect(text).toContain("# the entry point\n  node a:");
   });
+
+  it("round-trips a file-backed state decl's filePath/fileMode/versioned (PLAN-STATE-FILES.md)", () => {
+    const graph: FlowGraph = {
+      nodes: [],
+      edges: [],
+      state: [
+        { name: "notes", type: "file", merge: "replace", filePath: "notes/seed.md", fileMode: "read-write", versioned: true },
+      ],
+    };
+    const text = print({ name: "f", graph, comments: {} });
+    expect(text).toContain('state notes: file merge=replace filePath="notes/seed.md" fileMode=read-write versioned=true');
+    const reparsed = parse(text);
+    expect(reparsed.graph.state).toEqual(graph.state);
+  });
+
+  it("round-trips a read-only file-backed state decl (versioned omitted)", () => {
+    const graph: FlowGraph = {
+      nodes: [],
+      edges: [],
+      state: [{ name: "resource", type: "file", merge: "replace", filePath: "doc.md", fileMode: "read-only" }],
+    };
+    const text = print({ name: "f", graph, comments: {} });
+    const reparsed = parse(text);
+    expect(reparsed.graph.state).toEqual(graph.state);
+  });
 });
 
 describe("format idempotency", () => {

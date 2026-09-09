@@ -30,6 +30,8 @@ export interface ExecutionRouteDeps {
   scheduler: Scheduler;
   pluginToolsets?: ToolRegistration[] | undefined;
   flowsDir: string;
+  /** PLAN-STATE-FILES.md: the realpath'd `FLOWLATHE_STATE_FILES_ROOT`, resolved once at boot. */
+  stateFilesRoot?: string | undefined;
 }
 
 /** There is no auth boundary today — this is a client-bug guard, not an authorization control
@@ -44,7 +46,7 @@ function branchOwnedByExecution(db: Db, branchId: string, executionId: string): 
 }
 
 export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRouteDeps): void {
-  const { db, hub, scheduler, pluginToolsets, flowsDir } = deps;
+  const { db, hub, scheduler, pluginToolsets, flowsDir, stateFilesRoot } = deps;
 
   app.get<{ Params: { id: string }; Querystring: { branchId?: string } }>(
     "/api/executions/:id",
@@ -120,6 +122,11 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
     }
     const graph = getLatestGraphForFlowVersionFileAware(db, flowsDir, execution.flowVersionId);
     if (!graph) return reply.code(500).send({ error: "flow version graph not found" });
+    // For naming a minted versioned-file-state copy only (PLAN-STATE-FILES.md) — doesn't need to
+    // be the exact version `graph` came from (which may be a live, not-yet-saved file edit); the
+    // actual uniqueness guarantee is the timestamp+random suffix in `mintVersionedCopy`.
+    const pinnedVersion = getFlowVersionRow(db, execution.flowVersionId);
+    const flowVersion = pinnedVersion ? getFlow(db, pinnedVersion.flowId)?.version : undefined;
 
     try {
       const outcome = await stepOnce({
@@ -130,6 +137,8 @@ export function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionRou
         executionId: request.params.id,
         branchId: parsed.data.branchId,
         pluginToolsets,
+        stateFilesRoot,
+        flowVersion,
       });
       return outcome;
     } catch (err) {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { collidingIdsGraph, collidingIdsResponses } from "./golden/colliding-ids.js";
 import { failingFanOutGraph, failingFanOutResponses } from "./golden/failing-fan-out.js";
 import { fanOutGraph, fanOutResponses } from "./golden/fan-out.js";
+import { fileStateNodeGraph, fileStateNodeResponses } from "./golden/file-state-node.js";
 import { loopRouterBodyGraph, loopRouterBodyResponses } from "./golden/loop-router-body.js";
 import { mapFanoutGraph, mapFanoutResponses } from "./golden/map-fanout.js";
 import { mapMultinodeBodyGraph, mapMultinodeBodyResponses } from "./golden/map-multinode-body.js";
@@ -138,6 +139,17 @@ describe("interpreter/compiler parity", () => {
       expect(nodeIds).not.toContain("l");
       expect(nodeIds).not.toContain("body@l:0");
       expect(viaInterpreter.find((e) => e.nodeId === "takenAnswer")?.output).toBe("TAKEN_RESULT");
+    },
+    15_000,
+  );
+
+  it(
+    "matches for a Prompt template bound ambiently to a declared state entry with no wired edge (PLAN-STATE-FILES.md)",
+    async () => {
+      const viaInterpreter = await traceViaInterpreter(fileStateNodeGraph, fileStateNodeResponses);
+      const viaCompiled = traceViaCompiledScript(fileStateNodeGraph, fileStateNodeResponses);
+      expect(viaCompiled).toEqual(viaInterpreter);
+      expect(viaInterpreter).toEqual([{ nodeId: "a", renderedPrompt: "notes: hello", output: "DONE" }]);
     },
     15_000,
   );

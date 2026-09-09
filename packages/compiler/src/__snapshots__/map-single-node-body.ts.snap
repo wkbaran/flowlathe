@@ -26,10 +26,21 @@ const STATE_DECLS = [];
 // reconstruction (e.g. SearXNG, Firecrawl — see the imports above, driven entirely by env vars) are wired into the tool registry below instead.
 const REQUIRED_PLUGIN_TOOLSETS = [];
 
+// File-backed state entries (PLAN-STATE-FILES.md) have no standalone-script equivalent of
+// FLOWLATHE_STATE_FILES_ROOT yet — see CLAUDE.md/§7 of that plan.
+const REQUIRED_FILE_STATE_ENTRIES = [];
+
 async function main() {
   if (REQUIRED_PLUGIN_TOOLSETS.length > 0) {
     console.error(
       `this flow requires plugin toolset(s) not supported in exported scripts: ${REQUIRED_PLUGIN_TOOLSETS.join(", ")}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (REQUIRED_FILE_STATE_ENTRIES.length > 0) {
+    console.error(
+      `this flow declares file-backed state entry/entries not supported in exported scripts: ${REQUIRED_FILE_STATE_ENTRIES.join(", ")}`,
     );
     process.exitCode = 1;
     return;

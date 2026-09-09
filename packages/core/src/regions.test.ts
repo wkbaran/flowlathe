@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FlowEdge, FlowGraph, FlowNode } from "./graph.js";
 import { regions, terminalNodeIds, validateGraph } from "./regions.js";
+import type { StateDecl } from "./state.js";
 
 function node(id: string, type: string, data: Record<string, unknown> = {}, parentId?: string): FlowNode {
   return { id, type: type as FlowNode["type"], position: { x: 0, y: 0 }, data, parentId };
@@ -10,8 +11,8 @@ function edge(id: string, source: string, target: string, sourceHandle?: string,
   return { id, source, target, sourceHandle, targetHandle };
 }
 
-function graph(nodes: FlowNode[], edges: FlowEdge[]): FlowGraph {
-  return { nodes, edges, state: [] };
+function graph(nodes: FlowNode[], edges: FlowEdge[], state: StateDecl[] = []): FlowGraph {
+  return { nodes, edges, state };
 }
 
 const portsOf = (n: FlowNode): string[] => {
@@ -193,6 +194,51 @@ describe("validateGraph", () => {
 
   it("R7 is skipped entirely when portsOf is omitted", () => {
     const g = graph([node("a", "prompt", { ports: ["input"] })], []);
+    expect(validateGraph(g)).toEqual([]);
+  });
+
+  it("R7: a Prompt node's port matching a declared state entry is exempt from needing an edge (PLAN-STATE-FILES.md)", () => {
+    const g = graph(
+      [node("a", "prompt", { ports: ["notes"] })],
+      [],
+      [{ name: "notes", type: "string", merge: "replace" }],
+    );
+    expect(validateGraph(g, { portsOf })).toEqual([]);
+  });
+
+  it("R7: the state exemption does not apply to a non-Prompt node's port of the same name", () => {
+    const g = graph(
+      [node("a", "router", { ports: ["notes"] })],
+      [],
+      [{ name: "notes", type: "string", merge: "replace" }],
+    );
+    expect(validateGraph(g, { portsOf }).some((p) => p.includes('declares input port "notes" with no incoming edge'))).toBe(
+      true,
+    );
+  });
+
+  it("R8: a type \"file\" state decl missing filePath/fileMode is flagged", () => {
+    const g = graph([node("a", "prompt", { ports: [] })], [], [{ name: "notes", type: "file", merge: "replace" } as StateDecl]);
+    const problems = validateGraph(g);
+    expect(problems.some((p) => p.includes('state entry "notes" has type "file" but no filePath'))).toBe(true);
+    expect(problems.some((p) => p.includes('state entry "notes" has type "file" but no fileMode'))).toBe(true);
+  });
+
+  it("R8: a type \"file\" state decl with an unsupported merge rule is flagged", () => {
+    const g = graph(
+      [node("a", "prompt", { ports: [] })],
+      [],
+      [{ name: "notes", type: "file", merge: "numeric-add", filePath: "a.md", fileMode: "read-write" } as StateDecl],
+    );
+    expect(validateGraph(g).some((p) => p.includes('file entries only support "replace"/"append"'))).toBe(true);
+  });
+
+  it("R8: a well-formed type \"file\" state decl is not flagged", () => {
+    const g = graph(
+      [node("a", "prompt", { ports: [] })],
+      [],
+      [{ name: "notes", type: "file", merge: "append", filePath: "a.md", fileMode: "read-write" }],
+    );
     expect(validateGraph(g)).toEqual([]);
   });
 });

@@ -139,6 +139,13 @@ export function compileGraph(graph: FlowGraph, opts: CompileOptions): string {
 
   const stateDeclsLiteral = JSON.stringify(graph.state);
 
+  // A compiled script has no server-resolved FLOWLATHE_STATE_FILES_ROOT pipeline (PLAN-STATE-
+  // FILES.md §7: "deliberately not built"). Rather than let `createStateStore` throw confusingly
+  // deep inside a running script, fail clearly at the same REQUIRED_PLUGIN_TOOLSETS-style guard
+  // point before the scheduler is even touched — the script still exports (a faithful record of
+  // the graph), it just refuses to run.
+  const fileStateEntryNamesLiteral = JSON.stringify(graph.state.filter((d) => d.type === "file").map((d) => d.name));
+
   // Partition this flow's required plugin toolsets into standalone-capable (the registration
   // itself says how to rebuild it from env alone — see ToolRegistration.standalone) and
   // server-only (Spotify's OAuth tokens, an MCP server's config file: nothing a standalone script
@@ -196,10 +203,21 @@ const STATE_DECLS = ${stateDeclsLiteral};
   }) are wired into the tool registry below instead.
 const REQUIRED_PLUGIN_TOOLSETS = ${unsupportedToolsetsLiteral};
 
+// File-backed state entries (PLAN-STATE-FILES.md) have no standalone-script equivalent of
+// FLOWLATHE_STATE_FILES_ROOT yet — see CLAUDE.md/§7 of that plan.
+const REQUIRED_FILE_STATE_ENTRIES = ${fileStateEntryNamesLiteral};
+
 async function main() {
   if (REQUIRED_PLUGIN_TOOLSETS.length > 0) {
     console.error(
       \`this flow requires plugin toolset(s) not supported in exported scripts: \${REQUIRED_PLUGIN_TOOLSETS.join(", ")}\`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (REQUIRED_FILE_STATE_ENTRIES.length > 0) {
+    console.error(
+      \`this flow declares file-backed state entry/entries not supported in exported scripts: \${REQUIRED_FILE_STATE_ENTRIES.join(", ")}\`,
     );
     process.exitCode = 1;
     return;
@@ -445,7 +463,7 @@ function emitLoopOrMap(node: FlowNode, ctx: RegionCtx, isOptional: (id: string) 
   const injectedExpr = node.type === "loop" ? "acc" : "item";
 
   const ownPorts: string[] = emitTable[node.type].inputPorts(node.data);
-  const ownBindings = ownPorts.map((port) => bindPort(node.id, port, ctx, isOptional)).join(", ");
+  const ownBindings = ownPorts.map((port) => bindPort(node.id, port, ctx, isOptional, node.type)).join(", ");
 
   const childLoopStack = [...ctx.loopStack, { loopId: node.id, indexVar }];
   const childCtx = buildRegionCtx(
@@ -488,19 +506,26 @@ function emitLoopOrMap(node: FlowNode, ctx: RegionCtx, isOptional: (id: string) 
 
 /** One port's binding expression: the accessor into its in-region source edge, or — for a body
  *  entry port with no in-region edge whose name matches this region's `injected` port — the
- *  injected value's own expression (`acc`/`item`). Every other unbound port was already caught
- *  by `validateGraph`'s R7 before compilation got here, so the throw below is an invariant
- *  check, not a reachable user-facing error path. Shared by `callExpr` (an ordinary node's
- *  bindings) and `emitLoopOrMap` (a loop/map node's OWN bindings, from its enclosing region —
- *  which matters when the loop/map node is itself a body entry point one level up, as in a
- *  Map-of-Loop nesting). */
-function bindPort(nodeId: string, port: string, ctx: RegionCtx, isOptional: (id: string) => boolean): string {
+ *  injected value's own expression (`acc`/`item`), or — for a Prompt node's template variable
+ *  with no edge whose name matches a declared flow-State entry (PLAN-STATE-FILES.md L8/§4.4) —
+ *  an inline `state.read(...)` call, mirroring the interpreter's identical ambient fallback in
+ *  `run-graph.ts`'s `dispatchNode`. Every other unbound port was already caught by
+ *  `validateGraph`'s R7 before compilation got here, so the throw below is an invariant check,
+ *  not a reachable user-facing error path. Shared by `callExpr` (an ordinary node's bindings) and
+ *  `emitLoopOrMap` (a loop/map node's OWN bindings, from its enclosing region — which matters
+ *  when the loop/map node is itself a body entry point one level up, as in a Map-of-Loop
+ *  nesting); `nodeKind` gates the state exemption to "prompt" only, exactly like the interpreter's
+ *  `requiredPortsFor`. */
+function bindPort(nodeId: string, port: string, ctx: RegionCtx, isOptional: (id: string) => boolean, nodeKind: string): string {
   const edge = ctx.incoming.get(nodeId)?.get(port);
   if (edge) {
     const sourceNode = ctx.nodesById.get(edge.source)!;
     return `${port}: ${accessorExpr(sourceNode, ctx.varNames.get(edge.source)!, isOptional(edge.source), edge.sourceHandle)}`;
   }
   if (ctx.injected && ctx.injected.port === port) return `${port}: ${ctx.injected.expr}`;
+  if (nodeKind === "prompt" && ctx.graph.state.some((d) => d.name === port)) {
+    return `${port}: String(state.read(${JSON.stringify(port)}))`;
+  }
   throw new Error(`node "${nodeId}" has no incoming edge bound to input "${port}"`);
 }
 
@@ -509,7 +534,7 @@ function callExpr(nodeId: string, ctx: RegionCtx, isOptional: (id: string) => bo
   if (!node) throw new Error(`unknown node "${nodeId}"`);
   const emitter = emitTable[node.type];
   const ports: string[] = emitter.inputPorts(node.data);
-  const bindings = ports.map((port) => bindPort(nodeId, port, ctx, isOptional)).join(", ");
+  const bindings = ports.map((port) => bindPort(nodeId, port, ctx, isOptional, node.type)).join(", ");
   return `await rt.${emitter.runtimeMethod}(${specExpr(nodeId, ctx)}, { ${bindings} })`;
 }
 

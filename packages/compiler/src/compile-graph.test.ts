@@ -19,6 +19,37 @@ describe("compileGraph", () => {
     expect(script).toContain("rt.finish({ n_b: n_b.output });");
   });
 
+  it("binds a Prompt template variable with no wired edge, matching a declared state entry, to an inline state.read call (PLAN-STATE-FILES.md)", () => {
+    const graph: FlowGraph = {
+      nodes: [{ id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "notes: {{notes}}", providerId: "mock", modelId: "m" } }],
+      edges: [],
+      state: [{ name: "notes", type: "string", merge: "replace", initial: "hi" }],
+    };
+    const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
+    expect(script).toContain('const n_a = await rt.prompt(N.n_a, { notes: String(state.read("notes")) });');
+  });
+
+  it("embeds the declared file-backed state entry names as REQUIRED_FILE_STATE_ENTRIES, empty for a flow with none", () => {
+    const graph: FlowGraph = {
+      nodes: [{ id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "hi", providerId: "mock", modelId: "m" } }],
+      edges: [],
+      state: [],
+    };
+    const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
+    expect(script).toContain("const REQUIRED_FILE_STATE_ENTRIES = [];");
+  });
+
+  it("embeds a non-empty REQUIRED_FILE_STATE_ENTRIES and a refusal guard when the flow declares a type:\"file\" entry", () => {
+    const graph: FlowGraph = {
+      nodes: [{ id: "a", type: "prompt", position: { x: 0, y: 0 }, data: { template: "notes: {{notes}}", providerId: "mock", modelId: "m" } }],
+      edges: [],
+      state: [{ name: "notes", type: "file", merge: "replace", fileMode: "read-write", filePath: "notes.md" }],
+    };
+    const script = compileGraph(graph, { providers: { mock: { kind: "mock" } } });
+    expect(script).toContain('const REQUIRED_FILE_STATE_ENTRIES = ["notes"];');
+    expect(script).toContain("not supported in exported scripts");
+  });
+
   it("emits an allOrCancel for a fan-out level", () => {
     const graph: FlowGraph = {
       nodes: [

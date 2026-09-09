@@ -19,7 +19,8 @@ function mulberry32(seed: number): () => number {
 }
 
 const MERGE_RULES: MergeRule[] = ["replace", "append", "numeric-add", "set-union", "error-on-conflict"];
-const STATE_TYPES: StateValueType[] = ["string", "number", "boolean", "array", "object"];
+const FILE_MERGE_RULES: MergeRule[] = ["replace", "append"];
+const STATE_TYPES: StateValueType[] = ["file", "string", "number", "boolean", "array", "object"];
 
 function pick<T>(rand: () => number, items: readonly T[]): T {
   return items[Math.floor(rand() * items.length)]!;
@@ -93,6 +94,18 @@ function randomGraph(seed: number): FlowGraph {
   const stateCount = Math.floor(rand() * 3);
   for (let i = 0; i < stateCount; i++) {
     const type = pick(rand, STATE_TYPES);
+    if (type === "file") {
+      const decl: StateDecl = {
+        name: `s${i}`,
+        type,
+        merge: pick(rand, FILE_MERGE_RULES),
+        filePath: `dir${Math.floor(rand() * 10)}/file${Math.floor(rand() * 10)}.md`,
+        fileMode: pick(rand, ["read-only", "read-write"] as const),
+      };
+      if (decl.fileMode === "read-write" && rand() < 0.5) decl.versioned = rand() < 0.5;
+      state.push(decl);
+      continue;
+    }
     const decl: StateDecl = { name: `s${i}`, type, merge: pick(rand, MERGE_RULES) };
     if (rand() < 0.6) decl.initial = randomScalar(rand);
     state.push(decl);
