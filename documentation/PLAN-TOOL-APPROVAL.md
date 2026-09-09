@@ -5,6 +5,12 @@ approval" in their own §8 citing the same limitation this plan removes. Read bo
 plan changes nothing about their allow/deny+sandbox design, which remains the permanent default
 security boundary. This is a temporary, opt-in bootstrapping aid layered on top of it.
 
+> **Amended by `PLAN-DOMAIN-TOOLS.md` (§8).** Per-tool-name gating, deferred in §7 below, is now
+> in scope and should land with this plan rather than after it — a domain toolset's tools differ
+> enormously in consequence (`git_status` vs. `git_push`), and gating a whole toolset to catch one
+> dangerous tool produces exactly the approval fatigue this gate is supposed to prevent. See §7's
+> first bullet for the (small) change. Nothing else in this plan is affected.
+
 ---
 
 ## 1. Problem
@@ -69,7 +75,7 @@ Verified directly against the current code before writing anything below (not in
 | # | Decision | Why |
 |---|---|---|
 | L1 | **Default off, zero cost when off.** `FLOWLATHE_TOOL_APPROVAL` unset or `off` ⇒ `resolveToolApprovalConfig` returns `undefined` ⇒ `host-builder.ts` returns the base `ToolRegistry` unwrapped — no extra indirection on the hot path. | The whole point: allow/deny+sandbox is permanent; this is optional and temporary. |
-| L2 | **Generic over toolset, not per-plugin.** `FLOWLATHE_TOOL_APPROVAL` = `all` \| a comma-separated list of toolset names (`shell`, `fs`, `mcp:<server>`, ...). One decorator, no plugin-specific code. | Works for any current or future toolset without duplicating logic per plugin. |
+| L2 | **Generic over toolset, not per-plugin.** `FLOWLATHE_TOOL_APPROVAL` = `all` \| a comma-separated list of **toolset names** (`shell`, `fs`, `git`, `mcp:<server>`, …) **or individual tool names** (`git_push`, `github_create_pull_request`) — per `PLAN-DOMAIN-TOOLS.md` §8; a tool-name match is checked first. One decorator, no plugin-specific code. | Works for any current or future toolset without duplicating logic per plugin. The tool-name grain exists because a domain toolset's tools differ enormously in consequence, and gating all ten of `git`'s tools to catch `git_push` is how a gate becomes a rubber stamp. |
 | L3 | **The suspend key is synthesized per call**: `` `${meta.activationKey}#tool-approval:${randomUUID()}` ``. | §1.1 fact 1 — `meta.activationKey` alone collides across concurrent tool calls in one round. |
 | L4 | **The gate's `node_suspended.nodeId` is `meta.activationKey` verbatim** (the prompt node's own scoped id) — never a derived/stripped form. | §1.1 fact 2 — matches the identical string the node's own eventual `node_finished` carries, so Canvas's existing clear-on-finish logic keeps working with zero change to that mechanism. |
 | L5 | **`args` reach the UI/log only as a pre-scrubbed, pre-truncated preview string** (`argsPreview: string`, ≤2,000 chars, via `scrubUntrustedText`), never as a raw `Record<string, unknown>`. | Args can carry untrusted text from an earlier tool result; this now reaches a persisted `RunEvent` and a human-facing render surface (bidi/zero-width spoofing of an approval prompt is the same attack class `scrubUntrustedText` already exists to stop, applied to a new surface). |
@@ -525,9 +531,26 @@ Steps 1–3 touch no existing behavior and are independently revertible.
 
 ## 7. Scope: deliberately not built
 
-- **Per-tool-name gating** (only per-toolset). A toolset is already the grain every other
-  availability concept in this repo uses (`enabledToolsets`, `requiredToolsets`,
-  `missingToolsets`); finer grain is a straightforward but unrequested extension.
+- ~~**Per-tool-name gating** (only per-toolset).~~ **Amended by `PLAN-DOMAIN-TOOLS.md` §8 — this
+  is now in scope and should land with this plan, not after it.** The original reasoning was that
+  a toolset is the grain every other availability concept uses (`enabledToolsets`,
+  `requiredToolsets`, `missingToolsets`), which is still true — but it assumed the gated toolset
+  would be `shell`, where every call is equally unbounded and per-toolset is therefore the only
+  meaningful grain anyway. With domain toolsets that assumption fails in both directions:
+  `git_status` and `git_push` are not remotely the same decision, nor are `github_get_issue` and
+  `github_create_pull_request`. Gating a whole toolset to catch its one dangerous tool means
+  approving a dozen harmless calls per run, which is how approval fatigue produces
+  rubber-stamping — the gate then actively degrades safety rather than adding to it.
+
+  The change is small and lands entirely inside this plan's existing shapes:
+  `GatedToolsets` becomes `"all" | ReadonlySet<string>` where a member matching a **tool** name
+  gates that tool and a member matching a **toolset** name gates all of its tools;
+  `resolveToolApprovalConfig` needs no parsing change at all (it already splits a comma-separated
+  list); `isGated` gains one `has(name)` check beside its existing `has(toolset)`. Ambiguity
+  between the two namespaces is not a real risk — every tool name in this repo is prefixed with
+  its toolset (`git_push`, `github_comment`, `read_state`) — but the union order matters, so
+  document that a tool-name match is checked first and add a §5.1 case pinning
+  `new Set(["git_push"])` gating only that one tool out of `git`'s ten.
 - **A distinct "resumed" RunEvent / precise execution-status restoration.** Execution status can
   read `awaiting_input` longer than the real wait, since `hostEmit`'s `node_finished` branch is
   the only thing that flips status back to `"running"`, and after a tool approval resumes the
@@ -573,6 +596,8 @@ Steps 1–3 touch no existing behavior and are independently revertible.
 - [ ] `packages/runtime/src/tool-approval.ts` exists with the tests in §5.1, including the
       concurrent-calls collision test and the cancellation-rejection test.
 - [ ] `packages/server/src/tool-approval-config.ts` exists with the tests in §5.2.
+- [ ] Per-tool-name gating works alongside per-toolset gating (§7 first bullet), with a §5.1 case
+      pinning `new Set(["git_push"])` gating that tool alone and leaving its nine siblings ungated.
 - [ ] `executor.test.ts`'s new integration test (§5.3) passes, covering approve, deny, toolset
       scoping, the omitted-config no-op case, and cancellation.
 - [ ] With `FLOWLATHE_TOOL_APPROVAL` unset: behavior is byte-for-byte identical to before this

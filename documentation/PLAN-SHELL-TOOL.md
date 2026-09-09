@@ -2,8 +2,22 @@
 
 Closes GitHub issue #1 ("Add shell tool — Including sanitization and sandboxing").
 
-Companion plan: `PLAN-FILE-TOOL.md` (issue #2). The two share one new primitive and one real
-combined threat — see §9. Read both before implementing either.
+> **Status: deferred behind the domain toolsets, and amended.** `PLAN-DOMAIN-TOOLS.md` found that
+> this plan's actual boundary — the command allowlist — fails outright for the two commands an
+> operator is most likely to reach for: `git config core.pager …` then `git log`, and
+> `aws configure set credential_process …` then any `aws` call, are each arbitrary code execution
+> in **two allowlisted calls**, with no blocked flag used and no interpreter allowlisted. Both are
+> now hard-refused by L11 below. `git` and GitHub are built as domain plugins instead
+> (`PLAN-GIT.md`, `PLAN-GITHUB.md`); AWS gets no toolset at all, because IAM is a strictly better
+> boundary than any argv filter (`PLAN-DOMAIN-TOOLS.md` D3).
+>
+> This plan is **not cancelled** — it remains the only answer to the genuinely open-ended case
+> (run a test suite, invoke `ffmpeg`, call a CLI with no API). Build it last, and treat
+> `SHELL_TOOL_WRAPPER` (§7.3) as required rather than optional when you do.
+
+Companion plans: `PLAN-DOMAIN-TOOLS.md` (read first — the amendments above and their reasoning),
+`PLAN-FILE-TOOL.md` (issue #2). This plan and the file tool share one new primitive and one real
+combined threat — see §9. Read all three before implementing this one.
 
 ---
 
@@ -11,8 +25,13 @@ combined threat — see §9. Read both before implementing either.
 
 flowlathe can search the web, scrape pages, talk to Discord and Spotify, and call an arbitrary
 MCP server's tools — but it cannot run a local command. Every tool a prompt node can reach today
-is a network call to a vendor. A flow that wants to run a test suite, invoke `git`, resize an
-image with `ffmpeg`, or call a CLI that has no HTTP API has no path at all.
+is a network call to a vendor. A flow that wants to run a test suite, resize an image with
+`ffmpeg`, or call a CLI that has no HTTP API has no path at all.
+
+(This list originally offered `git` as its lead example. It is no longer here: `git` turned out to
+be one of the commands this design specifically *cannot* make safe — see the status banner above
+and L11 — and is built as `PLAN-GIT.md` instead. That correction is the reason
+`PLAN-DOMAIN-TOOLS.md` exists.)
 
 This is the single sharpest surface anything in this repo will ever add: a local model's tool
 arguments become a process on the operator's machine, running as the operator's user, with the
@@ -72,6 +91,7 @@ Established, verified in this repo before writing anything below:
 | L8 | **`standalone` is set** (`shellToolsetFromEnv`), so an exported compiled script can use this toolset. | Config is env-only, exactly like SearXNG/Firecrawl. An operator who set the env vars on the machine running the script opted in there too. Documented in README with the same warning as the server. |
 | L9 | **No `shell` node kind in this plan.** Toolset only. | Phase C's `search`/`fetch` node kinds are a separable pattern (`accessorExpr`, port names, DSL, Canvas views, golden fixtures). Deferred deliberately — §8. |
 | L10 | **Linux/macOS only.** No Windows support, no `cmd.exe`/PowerShell path. | The repo targets WSL2/Linux and an Alpine container; a Windows argv-quoting story is a second, differently-shaped problem (`CreateProcess` re-parses the command line) and there is no consumer for it. |
+| L11 | **A command whose own config file can name a command to execute is hard-refused, regardless of the allowlist** — `git`, `aws`, `gh`, `npm`, `pnpm`, `yarn`, `docker`, alongside the `sudo`/`doas`/`su` refusal already in §4.1 step 2. An operator cannot opt in via `SHELL_TOOL_ALLOWED_COMMANDS`. | Added by `PLAN-DOMAIN-TOOLS.md` §1. Writing that config is *itself* an allowlisted invocation, so the pair "write the config, then run anything" is arbitrary execution in two calls with no blocked flag and no interpreter allowlisted. The flag table cannot see it because no flag is involved, and `HOME = workdir` (L4) is what makes the written config persist between the two calls (§7.1). This is a different mechanism from L2's allowlist and needs its own refusal. |
 
 ---
 
@@ -179,14 +199,29 @@ export function validateCommandInvocation(
 
    `sudo`/`doas`/`su` are refused at step 2 regardless of the allowlist: an operator who puts
    them in `SHELL_TOOL_ALLOWED_COMMANDS` has almost certainly not thought it through, and the
-   cost of being wrong is total. Document this as the one place the allowlist is overridden.
+   cost of being wrong is total. Since L11, they are joined there by `git`, `aws`, `gh`, `npm`,
+   `pnpm`, `yarn` and `docker` — a single `HARD_REFUSED_COMMANDS` set, checked before the
+   allowlist, with an error message naming the reason (`"<cmd> can write a config file naming a
+   command to execute; see PLAN-DOMAIN-TOOLS.md"`) rather than just "not allowed", so an operator
+   who tries does not simply add it to the allowlist and move on. Document this as the one place
+   the allowlist is overridden.
 
-   **`awk` is the honest limit of a flag table**: its *first positional argument* is a program,
-   and `awk 'BEGIN{system("…")}'` needs no flag at all. The same is true of `find … -exec` (in
-   the table) and of any interpreter an operator allowlists. State plainly in the module doc
-   comment: **the flag table catches known shapes; the allowlist is the actual boundary.** An
-   operator allowlisting an interpreter has granted arbitrary execution and no table will
-   un-grant it.
+   The flag table has **three** honest limits, not one, and the module doc comment must name all
+   three:
+
+   - **`awk`'s first positional argument is a program.** `awk 'BEGIN{system("…")}'` needs no flag
+     at all. The same is true of `find … -exec` (in the table) and of any interpreter an operator
+     allowlists.
+   - **A subcommand is not a flag.** `docker run` was already in the table as a subcommand — the
+     one place this mechanism is reached for — and that is the exception rather than the rule.
+     `git config`, `aws configure`, `npm config` are all subcommands, invisible to a flag scan.
+   - **A config file is not an argument.** L11's class: the dangerous invocation and the harmless
+     one are two separate calls, so no single-call check can see the pair. This is the limit that
+     `PLAN-DOMAIN-TOOLS.md` §1 found and that L11 exists for.
+
+   **The flag table catches known shapes; the allowlist is the actual boundary** — and L11 exists
+   because for one class of command that boundary is unsound at any setting. An operator
+   allowlisting an interpreter has granted arbitrary execution and no table will un-grant it.
 6. **Env-value null-byte check.** Unchanged.
 
 `packages/plugins/mcp/src/security.ts` keeps `McpConfigError` and
@@ -395,6 +430,14 @@ The interesting half of the suite, and all of it is pure:
 - bare-name rejection: `/bin/ls`, `./run.sh`, `..`, `a\0b`, `""`
 - allowlist miss names the current allowlist in the message
 - `sudo`/`doas`/`su` refused even when explicitly allowlisted
+- **L11's set refused even when explicitly allowlisted** — `git`, `aws`, `gh`, `npm`, `pnpm`,
+  `yarn`, `docker` — each with an error naming the config-file reason rather than a bare "not
+  allowed", so an operator reading it does not just add it to the allowlist
+- **the two-call sequences that motivated L11 are unreachable**: assert
+  `{command: "git", args: ["config", "core.pager", "sh -c x"]}` and
+  `{command: "aws", args: ["configure", "set", "credential_process", "x"]}` are both refused at
+  the command name — and note in the test's own comment that neither is caught by the
+  metacharacter scan or the flag table, which is the whole point
 - dangerous flags: `node -e`, `node --eval=x`, `npx -y`, `sh -c`, `env -S`, `find … -exec`,
   `git -c core.pager=…`, `xargs -I`
 - combined short flags: `-yc` for `npx`
@@ -469,9 +512,15 @@ they're unset, and that a real command runs when they are.
 
 ## 6. Ordering
 
-1. `command-safety.ts` + tests; delegate `plugin-mcp`'s validator; full `pnpm test` green.
-2. `path-safety.ts` + tests (§9) — or consume it, if `PLAN-FILE-TOOL.md` landed first.
-3. Package scaffold, `config.ts`, `exec.ts` with tests (nothing model-facing yet).
+1. `command-safety.ts` + tests, including L11's hard-refusal set; delegate `plugin-mcp`'s
+   validator; full `pnpm test` green.
+2. `path-safety.ts` + tests (§9) — or consume it, if `PLAN-FILE-TOOL.md` or `PLAN-GIT.md` landed
+   first (both specify the identical module; `PLAN-GIT.md` §4.1 adds a `relativeTo` helper
+   alongside it).
+3. Package scaffold, `config.ts`, and the exec runner with tests (nothing model-facing yet). If
+   `PLAN-GIT.md` landed first, **consume its `runArgv` from `@flowlathe/plugin-common`** (that
+   plan's §4.2 owns the module precisely so this one inherits it) and add only the allowlist and
+   `SHELL_TOOL_WRAPPER` layers §4.3 describes on top; do not author a second runner.
 4. `tools.ts` + `manifest.ts` + tests.
 5. Server wiring, README, manual smoke test.
 6. CLAUDE.md notes (§10).
@@ -491,6 +540,15 @@ directory (L5), a wall-clock timeout, an output cap, and process-group cleanup. 
 reduction in blast radius and it is **not a security boundary**. An operator who allowlists an
 interpreter, a package manager, or `find` has granted arbitrary local code execution to whatever
 the model decides to do. Say this in README in those words.
+
+**Two calls are one call, because the workdir persists.** L5 pins a working directory and L4 sets
+`HOME` to it — both containment features — and together they mean anything a command *writes*
+there is read back by the next command. That is what turns a config write into an execution
+primitive (L11, `PLAN-DOMAIN-TOOLS.md` §1): `git config core.pager 'sh -c …'` is inert on its own,
+and `git log` is inert on its own, and the pair is a shell. Any per-call reasoning about whether
+an invocation is dangerous is therefore incomplete by construction — the unit of analysis is the
+*session*, not the call. L11 handles the known instances of this; the general case is why tier 1
+or tier 2 is the real answer.
 
 Hermes's `agent/file_safety.py` says the same thing about its own guards, in its module docstring,
 and it is right: *"Every guard here is defense-in-depth, NOT a security boundary: the terminal tool
@@ -533,6 +591,12 @@ its users type shell; flowlathe's caller is a model emitting JSON, so it can ref
 
 ## 8. Scope: deliberately not built
 
+- **`git`, GitHub, and AWS.** All three were originally intended to arrive through this toolset's
+  allowlist and are now out of scope for it permanently (L11). `PLAN-GIT.md` builds local git as
+  fixed argv templates with typed value slots; `PLAN-GITHUB.md` builds GitHub as an HTTP client
+  with no subprocess at all; AWS gets nothing, because IAM is a strictly more expressive boundary
+  than an argv filter and is enforced server-side (`PLAN-DOMAIN-TOOLS.md` D3). If this plan is
+  ever built, it must not re-add any of them to the allowlist.
 - **A `shell` node kind** (L9). A deterministic, wired-into-the-graph command node is a coherent
   follow-on mirroring `search`/`fetch`, and it needs the whole NodeKind checklist plus a parity
   stub for subprocesses (§5.4).
@@ -564,8 +628,19 @@ its users type shell; flowlathe's caller is a model emitting JSON, so it can ref
 
 ### 9.1 One path primitive, owned by whichever plan lands first
 
-Both tools need "resolve a caller-supplied relative path under a fixed root, or refuse". Its
-specification is identical in both plans and it must exist exactly once:
+> **Superseded in part: this primitive already exists — do not write a new one.**
+> `PLAN-STATE-FILES.md` implemented `resolveWithinRoot` (with tests) at
+> `packages/runtime/src/state-file-io.ts:53`, after this section was written. `PLAN-GIT.md` §4.1
+> resolves where it should live: extracted into a new dependency-free Node-only package
+> `@flowlathe/path-safety`, depended on by `runtime` and `plugin-common` alike — which is the
+> "new Node-only shared package" this section's own last paragraph already sanctioned. The
+> specification below stands as documentation of what the function does; it is no longer a
+> build instruction. If this plan is ever implemented, **consume** that package.
+
+Three tools need "resolve a caller-supplied relative path under a fixed root, or refuse" — this
+one, `PLAN-FILE-TOOL.md`, and `PLAN-GIT.md` (whose §4.1 also adds a `relativeTo(root, absolute)`
+helper beside it, since git wants a repo-relative path after `--`). Its specification is identical
+in all three and it must exist exactly once:
 
 ```ts
 // packages/plugins/_common/src/path-safety.ts
@@ -617,10 +692,20 @@ Add one entry, in this file's established voice — the surprises, not the summa
   with different threat models (operator-authored MCP config vs. model-authored tool arguments);
   `validateStdioServerConfig` is now a wrapper whose only remaining jobs are refusing `cwd` and
   translating `CommandSafetyError` into `McpConfigError`.
-- **The flag table is not the boundary; the allowlist is.** `awk`'s first positional is a program,
-  `find -exec` takes one, and any allowlisted interpreter is arbitrary execution. Do not add
-  entries to `DANGEROUS_FLAGS_BY_COMMAND` under the impression that it makes an interpreter safe
-  to allowlist.
+- **The flag table is not the boundary; the allowlist is — and for one class of command the
+  allowlist is unsound at any setting.** `awk`'s first positional is a program, `find -exec` takes
+  one, a *subcommand* is invisible to a flag scan, and a command that writes its own config file
+  (`git config`, `aws configure set credential_process`, `gh alias set`, `npm config`) turns two
+  individually-harmless allowlisted calls into arbitrary execution — which no single-call check
+  can see, because the unit of analysis is the session, not the call. Hence L11's
+  `HARD_REFUSED_COMMANDS`. Do not add entries to `DANGEROUS_FLAGS_BY_COMMAND` under the impression
+  that it makes an interpreter safe to allowlist, and do not remove anything from
+  `HARD_REFUSED_COMMANDS` to "let an operator decide" — `git` and GitHub have real toolsets
+  (`PLAN-GIT.md`, `PLAN-GITHUB.md`) and AWS deliberately has none (`PLAN-DOMAIN-TOOLS.md` D3).
+- **`SHELL_TOOL_WORKDIR` + `HOME = workdir` are containment features that also give a written
+  payload a home.** Anything one call writes there, the next call reads back. That is the
+  mechanism behind L11 and the reason §7.1's honesty paragraph now talks about sessions rather
+  than calls.
 - **The child environment is built, not inherited**, and one test (`printenv` + a planted
   `FIRECRAWL_API_KEY`) is the only thing standing between this tool and a one-call credential
   dump. Do not "simplify" `exec.ts` by passing `process.env`.
@@ -642,12 +727,17 @@ Add one entry, in this file's established voice — the surprises, not the summa
 - [ ] `pnpm -r typecheck` and `pnpm test` green from the repo root (not just the new package —
       `plugin-mcp` is modified).
 - [ ] `packages/plugins/shell` exists with the tests in §5.1–§5.3, including the `printenv`
-      credential test and the descendant-kill test.
+      credential test, the descendant-kill test, and L11's hard-refusal cases.
 - [ ] `plugin-mcp`'s existing tests pass unmodified, or with only an error-message update.
+- [ ] `HARD_REFUSED_COMMANDS` covers L11's set and `sudo`/`doas`/`su`, is checked *before* the
+      allowlist, and its error message names the reason rather than reading as "add it to the
+      allowlist".
 - [ ] With no env set: `/api/plugins/status` shows shell as not configured, a graph enabling it
       shows the workflow-dependency banner, and `/run` returns 409.
 - [ ] With env set: a real command runs end to end through a prompt node's tool loop, verified
       manually against the running server.
 - [ ] README documents every `SHELL_TOOL_*` variable, the tier-0/1/2 sandboxing story in the
-      words of §7.1, and the write-then-execute interaction of §9.2.
+      words of §7.1 (including the two-calls-are-one-call paragraph), the write-then-execute
+      interaction of §9.2, and L11 — specifically that `git`, `aws`, `gh` and the package managers
+      cannot be allowlisted, with a pointer to `PLAN-GIT.md`/`PLAN-GITHUB.md` for the first two.
 - [ ] CLAUDE.md carries the §10 entry.
