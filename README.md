@@ -154,6 +154,21 @@ a valid bot token. Mentions of `@everyone`/`@here` and roles are stripped from e
 sends unless you explicitly set `DISCORD_ALLOW_MENTION_EVERYONE=1` / `DISCORD_ALLOW_MENTION_ROLES=1`.
 This toolset is outbound-only — there's no way yet for a Discord message to *start* a flow.
 
+To let a flow see and manage GitHub issues/pull requests, set `GITHUB_TOKEN` (secret — a
+[fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens),
+scoped to **only the repositories you allowlist below**; that scoping is the real security
+boundary, `GITHUB_ALLOWED_REPOS` is what flowlathe can enforce on top of it) and
+`GITHUB_ALLOWED_REPOS` (comma-separated `owner/name`, case-insensitive) — this registers
+`github_list_issues`, `github_get_issue`, `github_list_pull_requests`, `github_get_pull_request`,
+and `github_get_checks` under the `github` toolset. Set `GITHUB_MODE=rw` to additionally register
+`github_create_issue`, `github_comment`, and `github_create_pull_request` — **doing so lets a
+model open issues, post comments, and open pull requests under the token owner's own identity**,
+so only enable it with a token you're comfortable attributing that way. `github_create_pull_request`
+defaults to `draft: true` regardless of GitHub's own API default, so an opened PR requests no
+reviews and notifies no CODEOWNERS unless the flow explicitly overrides it. `GITHUB_API_BASE_URL`
+overrides the default `https://api.github.com` for GitHub Enterprise. As with Discord, there's no
+Connect button for this plugin — auth is entirely a manually-set env var.
+
 To use file-backed State entries — a flow author picks a specific document at design time,
 either a read-only reference a Prompt node pulls in or a markdown-style notes file a flow writes
 to across a run — set `FLOWLATHE_STATE_FILES_ROOT` to a directory on disk. Every declared
