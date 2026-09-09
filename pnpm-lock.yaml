@@ -625,6 +625,9 @@ importers:
       '@flowlathe/plugin-firecrawl':
         specifier: workspace:*
         version: link:../plugins/firecrawl
+      '@flowlathe/plugin-git':
+        specifier: workspace:*
+        version: link:../plugins/git
       '@flowlathe/plugin-mcp':
         specifier: workspace:*
         version: link:../plugins/mcp

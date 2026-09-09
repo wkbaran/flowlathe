@@ -154,6 +154,27 @@ a valid bot token. Mentions of `@everyone`/`@here` and roles are stripped from e
 sends unless you explicitly set `DISCORD_ALLOW_MENTION_EVERYONE=1` / `DISCORD_ALLOW_MENTION_ROLES=1`.
 This toolset is outbound-only — there's no way yet for a Discord message to *start* a flow.
 
+To let a flow read (and optionally change) a local git repository's history, set `GIT_TOOL_ROOT`
+to an absolute path inside a git work tree — this registers five read-only tools
+(`git_status`, `git_log`, `git_diff`, `git_show`, `git_list_branches`) under the `git` toolset.
+`GIT_TOOL_MODE=rw` additionally registers `git_add`, `git_commit`, `git_create_branch`, and
+`git_switch`; `GIT_TOOL_ALLOW_PUSH=1` (only honored together with `GIT_TOOL_MODE=rw`) additionally
+registers `git_push`, which publishes `HEAD` to `GIT_TOOL_REMOTE` (default `origin`). Each mode is
+structural — a mode that doesn't include a tool never registers it at all, rather than registering
+it gated to always fail. `GIT_TOOL_ROOT` unset, nonexistent, not a directory, or not a git work
+tree means the toolset isn't registered at all (with a warning logged at startup for the latter
+three). This plugin **only ever reads your git configuration, never writes it**: commit identity
+(`user.name`/`user.email`), the credential helper, and every remote are the **operator's** to set
+up by hand, outside flowlathe, exactly as if you were using `git` yourself in a terminal — there is
+no `git_config`/`git_remote`/`git_clone`/`git_fetch`/`git_pull` tool and there will not be one (see
+`documentation/PLAN-DOMAIN-TOOLS.md` for why: a config-writing tool is what turns a command
+allowlist into arbitrary code execution in two calls, which is also why this toolset — unlike an
+open-ended shell tool — is not and cannot be reached through a generic shell/exec toolset; none is
+built in this repository, and `git` is deliberately excluded from ever being allowlisted in one if
+it is). Every argv is a fixed template the plugin author wrote; a model can only ever supply
+already-validated values into named holes (a ref, a path, a commit message), never a subcommand or
+a flag.
+
 To use file-backed State entries — a flow author picks a specific document at design time,
 either a read-only reference a Prompt node pulls in or a markdown-style notes file a flow writes
 to across a run — set `FLOWLATHE_STATE_FILES_ROOT` to a directory on disk. Every declared
