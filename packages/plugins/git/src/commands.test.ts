@@ -137,8 +137,15 @@ describe("listBranchesArgv", () => {
       root,
       "branch",
       "--list",
-      "--format=%(refname:short)%x1f%(objectname:short)%x1f%(upstream:short)",
+      "--format=%(HEAD)%1f%(refname:short)%1f%(objectname:short)%1f%(upstream:short)",
     ]);
+  });
+
+  it("uses the bare %1f ref-format hex escape, never the log-style %x1f", () => {
+    // git branch --format uses the for-each-ref engine, which does not understand %x1f at all —
+    // it would be emitted completely literally, silently corrupting every field split.
+    const argv = listBranchesArgv(root);
+    expect(argv.some((a) => a.includes("%x1f"))).toBe(false);
   });
 });
 

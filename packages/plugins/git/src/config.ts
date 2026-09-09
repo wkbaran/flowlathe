@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
+import type { ToolRegistration } from "@flowlathe/core";
+import { createGitToolset } from "./tools.js";
 
 /**
  * Boot-time configuration for `@flowlathe/plugin-git` (PLAN-GIT.md §4.3). One repository
@@ -115,4 +117,13 @@ export function gitConfigFromEnv(env: NodeJS.ProcessEnv = process.env): GitConfi
     allowPush,
     remote: env["GIT_TOOL_REMOTE"] ?? "origin",
   };
+}
+
+/** Named export a compiled, exported script calls to reconstruct this toolset from environment
+ *  alone — see `ToolRegistration.standalone` and PLAN-INTEGRATIONS.md §4.4. Used the same way by
+ *  the live server (`packages/server/src/index.ts`). `[]` for every reason `gitConfigFromEnv`
+ *  returns `undefined` — the repo-wide "unset env var ⇒ zero tool registrations" rule. */
+export function gitToolsetFromEnv(env: NodeJS.ProcessEnv = process.env): ToolRegistration[] {
+  const cfg = gitConfigFromEnv(env);
+  return cfg ? createGitToolset(cfg) : [];
 }

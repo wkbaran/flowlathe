@@ -83,8 +83,17 @@ export function showArgv(root: string, slots: ShowSlots): string[] {
   return ["-C", root, "show", "--no-color", "--no-ext-diff", "--format=%H%x1f%aI%x1f%an%x1f%B", slots.ref];
 }
 
+/**
+ * Deliberately `%1f`, not the log/show-style `%x1f`: `git branch --format` uses the
+ * `for-each-ref` ref-format engine, whose hex-escape syntax is bare `%<hex>` (`%1f` for the unit
+ * separator) — NOT the `%x<hex>` used by the pretty-format engine `git log`/`git show --format`
+ * use. `%x1f` here is not an error and not rejected; it is emitted completely literally as the
+ * four characters `%x1f`, which would silently corrupt every field split. Verified against a real
+ * git 2.43 repo before writing this. `%(HEAD)` (`"*"` for the current branch, `" "` otherwise) is
+ * folded into the same one-shot format so `current` doesn't need a second subprocess call.
+ */
 export function listBranchesArgv(root: string): string[] {
-  return ["-C", root, "branch", "--list", "--format=%(refname:short)%x1f%(objectname:short)%x1f%(upstream:short)"];
+  return ["-C", root, "branch", "--list", "--format=%(HEAD)%1f%(refname:short)%1f%(objectname:short)%1f%(upstream:short)"];
 }
 
 /** `paths` are already repo-relative and pre-validated (`resolveWithinRoot` + `relativeTo`, one

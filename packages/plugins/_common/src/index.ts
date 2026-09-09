@@ -1,3 +1,4 @@
+export * from "@flowlathe/path-safety";
 export * from "./args.js";
 export * from "./exec.js";
 export * from "./http.js";
