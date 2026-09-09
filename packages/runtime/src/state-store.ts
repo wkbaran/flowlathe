@@ -1,12 +1,6 @@
 import { applyMerge, scrubUntrustedText, type MergeRule, type RunEvent, type StateDecl, type StateStore } from "@flowlathe/core";
-import {
-  mintVersionedCopy,
-  readStateFile,
-  resolveWithinRoot,
-  writeStateFile,
-  type ResolvedStateFile,
-  type StateFileConfig,
-} from "./state-file-io.js";
+import { resolveWithinRoot } from "@flowlathe/path-safety";
+import { mintVersionedCopy, readStateFile, writeStateFile, type ResolvedStateFile, type StateFileConfig } from "./state-file-io.js";
 
 /** Same discipline as `PLAN-TOOL-APPROVAL.md`'s `argsPreview`: a `state_write` event for a
  *  file-type entry carries a bounded preview, not the full file content — a growing markdown

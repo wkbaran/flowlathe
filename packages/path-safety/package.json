@@ -1,5 +1,5 @@
 {
-  "name": "@flowlathe/plugin-common",
+  "name": "@flowlathe/path-safety",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,10 +10,6 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
-  },
-  "dependencies": {
-    "@flowlathe/core": "workspace:*",
-    "@flowlathe/path-safety": "workspace:*"
   },
   "devDependencies": {
     "typescript": "5.9.3",

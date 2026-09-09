@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@flowlathe/core": "workspace:*",
+    "@flowlathe/path-safety": "workspace:*",
     "@flowlathe/node-fetch": "workspace:*",
     "@flowlathe/node-gate": "workspace:*",
     "@flowlathe/node-loop": "workspace:*",
