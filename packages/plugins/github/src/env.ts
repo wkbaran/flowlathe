@@ -1,5 +1,6 @@
 import type { ToolRegistration } from "@flowlathe/core";
 import { GithubClient } from "./client.js";
+import { createGithubToolset } from "./tools.js";
 
 export interface GithubConfig {
   token: string;
@@ -51,8 +52,12 @@ export function githubClientFromEnv(env: NodeJS.ProcessEnv = process.env): Githu
   return new GithubClient({ token: config.token, apiBaseUrl: config.apiBaseUrl });
 }
 
-/** Stubbed until C3 adds `tools.ts` — kept here (rather than left absent) so `index.ts`'s export
- *  surface doesn't change shape between chunks. Wired to `createGithubToolset` in C3. */
-export function githubToolsetFromEnv(_env: NodeJS.ProcessEnv = process.env): ToolRegistration[] {
-  return [];
+/** Named export a compiled, exported script calls to reconstruct this toolset from environment
+ *  alone — see `ToolRegistration.standalone` (attached in `createGithubToolset`) and
+ *  PLAN-GITHUB.md L7. Used the same way by the live server (`packages/server/src/index.ts`). */
+export function githubToolsetFromEnv(env: NodeJS.ProcessEnv = process.env): ToolRegistration[] {
+  const config = githubConfigFromEnv(env);
+  if (!config) return [];
+  const client = new GithubClient({ token: config.token, apiBaseUrl: config.apiBaseUrl });
+  return createGithubToolset(client, { allowedRepos: config.allowedRepos, mode: config.mode });
 }

@@ -56,8 +56,18 @@ describe("githubClientFromEnv", () => {
   });
 });
 
-describe("githubToolsetFromEnv (stub — real registrations land in C3)", () => {
-  it("returns no registrations regardless of env", () => {
-    expect(githubToolsetFromEnv({ GITHUB_TOKEN: "t", GITHUB_ALLOWED_REPOS: "o/r" })).toEqual([]);
+describe("githubToolsetFromEnv", () => {
+  it("registers zero tools when unconfigured (secure default)", () => {
+    expect(githubToolsetFromEnv({})).toEqual([]);
+  });
+
+  it("registers 5 read tools with only GITHUB_TOKEN set", () => {
+    const regs = githubToolsetFromEnv({ GITHUB_TOKEN: "t" });
+    expect(regs).toHaveLength(5);
+  });
+
+  it("registers 8 tools once GITHUB_MODE=rw and an allowlist are set", () => {
+    const regs = githubToolsetFromEnv({ GITHUB_TOKEN: "t", GITHUB_ALLOWED_REPOS: "o/r", GITHUB_MODE: "rw" });
+    expect(regs).toHaveLength(8);
   });
 });
