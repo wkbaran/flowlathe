@@ -8,6 +8,7 @@ import { searxngToolsetFromEnv, SEARXNG_MANIFEST } from "@flowlathe/plugin-searx
 import { firecrawlToolsetFromEnv, FIRECRAWL_MANIFEST } from "@flowlathe/plugin-firecrawl";
 import { discordClientFromEnv, discordToolsetFromEnv, DISCORD_MANIFEST } from "@flowlathe/plugin-discord";
 import { gitToolsetFromEnv, GIT_MANIFEST } from "@flowlathe/plugin-git";
+import { githubToolsetFromEnv, GITHUB_MANIFEST } from "@flowlathe/plugin-github";
 import { listTriggers } from "@flowlathe/persistence";
 import { resolveStateFilesRoot } from "@flowlathe/runtime";
 import { resolveAllowedHosts } from "./allowed-hosts.js";
@@ -50,7 +51,14 @@ const flowsHub = new FlowsHub();
 const credentialKey = resolveCredentialKey(dataDir);
 const schedulerRegistry = new SchedulerRegistry(opened.db, credentialKey);
 
-const pluginManifests: PluginManifest[] = [SPOTIFY_MANIFEST, SEARXNG_MANIFEST, FIRECRAWL_MANIFEST, DISCORD_MANIFEST, GIT_MANIFEST];
+const pluginManifests: PluginManifest[] = [
+  SPOTIFY_MANIFEST,
+  SEARXNG_MANIFEST,
+  FIRECRAWL_MANIFEST,
+  DISCORD_MANIFEST,
+  GIT_MANIFEST,
+  GITHUB_MANIFEST,
+];
 
 const allowedHosts = resolveAllowedHosts();
 
@@ -80,7 +88,14 @@ if (spotifyClientId) {
   });
   pluginToolsets = createSpotifyToolset(spotifyClient);
 }
-pluginToolsets = [...pluginToolsets, ...searxngToolsetFromEnv(), ...firecrawlToolsetFromEnv(), ...discordToolsetFromEnv(), ...gitToolsetFromEnv()];
+pluginToolsets = [
+  ...pluginToolsets,
+  ...searxngToolsetFromEnv(),
+  ...firecrawlToolsetFromEnv(),
+  ...discordToolsetFromEnv(),
+  ...gitToolsetFromEnv(),
+  ...githubToolsetFromEnv(),
+];
 
 /** `MCP_SERVERS_CONFIG_PATH` points at a JSON file in the same `{"mcpServers": {...}}` shape
  *  Claude Desktop/Code use. Discovery is async (each server is connected to once, to list its

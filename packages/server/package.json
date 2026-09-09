@@ -22,6 +22,7 @@
     "@flowlathe/plugin-discord": "workspace:*",
     "@flowlathe/plugin-firecrawl": "workspace:*",
     "@flowlathe/plugin-git": "workspace:*",
+    "@flowlathe/plugin-github": "workspace:*",
     "@flowlathe/plugin-mcp": "workspace:*",
     "@flowlathe/plugin-searxng": "workspace:*",
     "@flowlathe/plugin-spotify": "workspace:*",

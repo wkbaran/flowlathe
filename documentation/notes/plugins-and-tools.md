@@ -414,3 +414,60 @@ index and for the invariants that apply repo-wide.
     No plugin-shaped e2e spec exists in this repo for any plugin yet (Spotify/Gate/MCP/SearXNG/
     Firecrawl/Discord all share this gap already); coverage here is the unit suite (real `git
     init`-created repositories, never mocked) plus a manual smoke test against a scratch clone.
+- **PLAN-GITHUB.md added `@flowlathe/plugin-github` — an HTTP client over the REST API (L1),
+  never a `gh` subprocess** (`PLAN-DOMAIN-TOOLS.md` D1). Eight tools: five read, always
+  registered; three write (`github_create_issue`, `github_comment`,
+  `github_create_pull_request`), registered only under `GITHUB_MODE=rw`.
+  - **`GET /repos/{owner}/{repo}/issues` returns pull requests too** — a PR is an issue in
+    GitHub's data model, distinguished only by a `pull_request` key on the item, present with
+    any value (including `null`) on every PR-shaped item. `GithubClient.listIssues` filters
+    those out (in the client, not `tools.ts` — deliberately, so `client.test.ts` alone proves
+    the filtering independent of any sanitization/allowlist concern layered on top).
+    `github_comment` deliberately *relies on the same fact* to serve both issues and PRs through
+    one endpoint: removing either half breaks the other's justification, so don't "simplify" one
+    without checking the other still needs it.
+  - **A primary rate limit is a 403, not a 429** (`x-ratelimit-remaining: 0` +
+    `x-ratelimit-reset`), and a secondary (abuse) limit is a `retry-after` header on *either*
+    403 or 429. Three cases, not two: collapsing "403 + remaining:0" into "any 403 is a rate
+    limit" makes a missing PAT scope look self-healing; collapsing "any 403" into "bad
+    credentials" makes rate-limit exhaustion look like a broken token. `GithubClient.request`
+    checks `x-ratelimit-remaining: 0` first (immediate failure naming the reset time, no retry —
+    the reset can be an hour out), then `retry-after` on either status (bounded retry, `MAX_
+    RETRIES = 3`, same loop shape as `DiscordClient.request`), then falls through to a generic
+    authorization-failure message naming the repo for anything else. Keep the order: checking
+    `retry-after` before `remaining: 0` would retry a call that's going to fail for an hour.
+  - **`GET /rate_limit` is the `unavailableReason` liveness probe** because GitHub documents it
+    as not counting against the rate limit, and it 401s on a bad or expired token — reachability
+    and auth in one free call. It deliberately bypasses `request()`'s own retry loop (a probe
+    should report quickly, not back off) and still goes through `CachedLivenessProbe`, never a
+    direct call, so it inherits the optimistic-before-first-probe behavior already recorded for
+    SearXNG above — a freshly-registered toolset can briefly report itself usable against a bad
+    token.
+  - **Auth is a manually-set `GITHUB_TOKEN` and nothing else** — no OAuth, no
+    `plugin_credentials` row, no Connect button, no `connect` field on `GITHUB_MANIFEST`. Same
+    narrowing already recorded for `DISCORD_BOT_TOKEN` above.
+  - **`GITHUB_ALLOWED_REPOS` entries and a tool's `repo` argument are compared
+    case-insensitively** — GitHub owners and repo names are themselves case-insensitive, so an
+    operator writing `MyOrg/MyRepo` while a model emits `myorg/myrepo` must not read as a denial.
+    `githubConfigFromEnv` lowercases the allowlist at parse time; `tools.ts`'s
+    `repoAllowlistError` lowercases the (already `repoSlugSlot`-validated) incoming slug before
+    comparing.
+  - **PR bodies, issue comments, branch names, and CI check output are attacker-authored by
+    design**, not incidentally like a search snippet — anyone can open an issue or a fork PR on
+    a public repo. Every field in the §4.4 cap table is sanitized at the source; the pull-request
+    diff is the one exception that owns its own `[truncated N of M chars]` marker and must be
+    `scrubUntrustedText`-then-sliced by hand rather than passed through
+    `sanitizeUntrustedText(text, maxLength)`, which would cut the marker back off. A check run's
+    `output.summary` is surfaced (capped at 1,000 chars); its `output.text` is never read at all
+    — CI log output is the single most attacker-influenceable field in this plugin.
+  - **No parity fixture, and the reason is not the usual "subprocess can't be stubbed" one**:
+    `packages/testing/src/net-stub.ts`'s `injectNetStubTable` only stubs `RuntimeHost.net`
+    (`globalThis.fetch` wired through the compiled script's `net.fetch`), which only the
+    `search`/`fetch` *node kinds* use. A plugin toolset's client (this one included) builds its
+    own `fetch` inside `<toolset>ToolsetFromEnv()`, a path the harness never touches — so a
+    parity run's compiled-script half would hit the real `api.github.com`. Closing this needs
+    `injectNetStubTable` to also stub the `standalone` factory's fetch, keyed by `(method, url,
+    sha256(body))` rather than URL alone (PLAN.md's design trap 8) — tracked, not hidden, and
+    true of every plugin in this repo, not particular to GitHub.
+  - **No Playwright spec**, for the usual reason: no plugin in this repo has one yet, and writing
+    the first is separable work (`notes/testing-and-e2e.md`).
